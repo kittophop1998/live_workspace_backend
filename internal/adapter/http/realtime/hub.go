@@ -251,7 +251,7 @@ func snapshotPayload(ws *entity.Workspace) map[string]any {
 func resourcePayload(value entity.Resource) map[string]any {
 	fields := make([]any, 0, len(value.Fields))
 	for _, field := range value.Fields {
-		fields = append(fields, map[string]any{"id": field.ID, "key": field.Key, "type": field.Type, "required": field.Required, "state": field.State, "change": field.Change, "description": field.Description})
+		fields = append(fields, map[string]any{"id": field.ID, "key": field.Key, "type": field.Type, "required": field.Required, "state": field.State, "change": field.Change, "description": field.Description, "value": field.Value})
 	}
 	return map[string]any{"id": value.ID, "name": value.Name, "kind": value.Kind, "method": value.Method, "path": value.Path, "state": value.State, "fields": fields, "updated_at": value.UpdatedAt, "updated_by": value.UpdatedBy}
 }

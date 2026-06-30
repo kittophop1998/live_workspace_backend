@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -74,6 +75,55 @@ func TestUpdateFieldRollsUpBreakingAndMarksStableModified(t *testing.T) {
 	}
 	if result.Rev != 4 {
 		t.Fatalf("expected rev 4, got %d", result.Rev)
+	}
+}
+
+func TestUpdateJSONFieldStoresValue(t *testing.T) {
+	service, repository := newTestService(entity.SchemaField{ID: "fld_meta", Key: "meta", Type: "json", State: entity.StateReady, Change: entity.ChangeStable})
+	value := any(map[string]any{"profile": map[string]any{"active": true}, "tags": []any{"new"}})
+
+	_, err := service.UpdateField(context.Background(), "col_test", "res_test", "fld_meta", nil, UpdateFieldInput{Value: &value})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := repository.workspace.Resources[0].Fields[0]
+	if !reflect.DeepEqual(field.Value, value) {
+		t.Fatalf("unexpected JSON value: %#v", field.Value)
+	}
+	if field.Change != entity.ChangeModified {
+		t.Fatalf("expected modified change, got %s", field.Change)
+	}
+}
+
+func TestUpdateFieldRejectsValueForNonJSONType(t *testing.T) {
+	service, repository := newTestService(entity.SchemaField{ID: "fld_name", Key: "name", Type: "string", State: entity.StateReady, Change: entity.ChangeStable})
+	value := any(map[string]any{"invalid": true})
+
+	_, err := service.UpdateField(context.Background(), "col_test", "res_test", "fld_name", nil, UpdateFieldInput{Value: &value})
+
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if repository.workspace.Rev != 3 {
+		t.Fatalf("failed mutation changed revision to %d", repository.workspace.Rev)
+	}
+}
+
+func TestChangingJSONFieldTypeClearsValue(t *testing.T) {
+	service, repository := newTestService(entity.SchemaField{
+		ID: "fld_meta", Key: "meta", Type: "json", State: entity.StateReady,
+		Change: entity.ChangeStable, Value: map[string]any{"active": true},
+	})
+	fieldType := "string"
+
+	_, err := service.UpdateField(context.Background(), "col_test", "res_test", "fld_meta", nil, UpdateFieldInput{Type: &fieldType})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.workspace.Resources[0].Fields[0].Value != nil {
+		t.Fatalf("expected value to be cleared, got %#v", repository.workspace.Resources[0].Fields[0].Value)
 	}
 }
 

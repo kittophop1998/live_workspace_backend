@@ -102,7 +102,8 @@ to request/response (no live presence, manual refetch).
   "required": true,
   "state": "ready",          // draft | ready | breaking
   "change": "stable",        // stable | added | modified | removed
-  "description": "Primary login email"   // optional, may be omitted/null
+  "description": "Primary login email", // optional, may be omitted/null
+  "value": null              // optional; only for type "json" — nested JSON shape/sample
 }
 ```
 
@@ -114,7 +115,7 @@ to request/response (no live presence, manual refetch).
 | `boolean` | `boolean` | `false` |
 | `uuid` | `string` | `"0000...-...0000"` |
 | `timestamp` | `string` | ISO-8601 |
-| `json` | `Record<string, unknown>` | `{}` |
+| `json` | inferred from `value` (else `Record<string, unknown>`) | `value` (else `{}`) |
 | `string[]` | `string[]` | `["sample"]` |
 | `number[]` | `number[]` | `[0]` |
 | `enum` | `string` | first token of `description` |
@@ -351,7 +352,7 @@ Response `data`: `{ "rev": 44, "resource": { "...Resource" } }` (full resource s
 the client refreshes the `state` rollup).
 
 ### PATCH `/resources/{id}/fields/{field_id}`
-Request (any subset of `key`, `type`, `required`, `state`, `description`):
+Request (any subset of `key`, `type`, `required`, `state`, `description`, `value`):
 ```json
 { "type": "number", "state": "breaking", "description": "now integer cents" }
 ```

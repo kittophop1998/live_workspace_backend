@@ -37,6 +37,7 @@ type fieldDocument struct {
 	ID, Key, Type, State, Change string
 	Required                     bool
 	Description                  *string
+	Value                        any
 }
 type resourceDocument struct {
 	ID, Name, Kind, State, UpdatedBy string
@@ -110,7 +111,7 @@ func toDocument(ws *entity.Workspace) workspaceDocument {
 		item := resourceDocument{ID: value.ID, Name: value.Name, Kind: string(value.Kind), Method: value.Method, Path: value.Path, State: string(value.State), UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 		item.Fields = make([]fieldDocument, len(value.Fields))
 		for j, field := range value.Fields {
-			item.Fields[j] = fieldDocument{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description}
+			item.Fields[j] = fieldDocument{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description, Value: field.Value}
 		}
 		doc.Resources[i] = item
 	}
@@ -133,7 +134,7 @@ func toEntity(doc workspaceDocument) *entity.Workspace {
 	for _, value := range doc.Resources {
 		item := entity.Resource{ID: value.ID, Name: value.Name, Kind: entity.ResourceKind(value.Kind), Method: value.Method, Path: value.Path, State: entity.FieldState(value.State), UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 		for _, field := range value.Fields {
-			item.Fields = append(item.Fields, entity.SchemaField{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change), Description: field.Description})
+			item.Fields = append(item.Fields, entity.SchemaField{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change), Description: field.Description, Value: normalizeBSONValue(field.Value)})
 		}
 		ws.Resources = append(ws.Resources, item)
 	}
@@ -144,4 +145,29 @@ func toEntity(doc workspaceDocument) *entity.Workspace {
 		ws.Activity = append(ws.Activity, entity.ActivityEvent{ID: value.ID, Actor: value.Actor, Verb: value.Verb, Target: value.Target, ResourceID: value.ResourceID, At: value.At})
 	}
 	return ws
+}
+
+func normalizeBSONValue(value any) any {
+	switch value := value.(type) {
+	case bson.D:
+		out := make(map[string]any, len(value))
+		for _, item := range value {
+			out[item.Key] = normalizeBSONValue(item.Value)
+		}
+		return out
+	case bson.M:
+		out := make(map[string]any, len(value))
+		for key, item := range value {
+			out[key] = normalizeBSONValue(item)
+		}
+		return out
+	case bson.A:
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = normalizeBSONValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }

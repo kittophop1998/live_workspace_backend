@@ -49,6 +49,7 @@ type SchemaField struct {
 	State       FieldState
 	Change      FieldChange
 	Description *string
+	Value       any
 }
 
 type Resource struct {

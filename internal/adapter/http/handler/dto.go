@@ -46,6 +46,7 @@ type fieldResponse struct {
 	State       string  `json:"state"`
 	Change      string  `json:"change"`
 	Description *string `json:"description,omitempty"`
+	Value       any     `json:"value,omitempty"`
 }
 type resourceResponse struct {
 	ID        string          `json:"id"`
@@ -82,7 +83,7 @@ func collaboratorDTO(value entity.Collaborator) collaboratorResponse {
 func resourceDTO(value entity.Resource) resourceResponse {
 	out := resourceResponse{ID: value.ID, Name: value.Name, Kind: string(value.Kind), Method: value.Method, Path: value.Path, State: string(value.State), Fields: []fieldResponse{}, UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 	for _, field := range value.Fields {
-		out.Fields = append(out.Fields, fieldResponse{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description})
+		out.Fields = append(out.Fields, fieldResponse{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description, Value: field.Value})
 	}
 	return out
 }

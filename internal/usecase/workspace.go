@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -81,6 +82,7 @@ type UpdateFieldInput struct {
 	Key, Type, State *string
 	Required         *bool
 	Description      **string
+	Value            *any
 }
 
 type MutationResult struct {
@@ -243,7 +245,24 @@ func (s *Service) UpdateField(ctx context.Context, actorID, resourceID, fieldID 
 			if !fieldTypes[*in.Type] {
 				return nil, entity.ActivityEvent{}, validation("invalid field type", map[string]any{"type": *in.Type})
 			}
-			field.Type = *in.Type
+		}
+		resultingType := field.Type
+		if in.Type != nil {
+			resultingType = *in.Type
+		}
+		if in.Value != nil {
+			if resultingType != "json" {
+				return nil, entity.ActivityEvent{}, validation("value is only valid for json fields", nil)
+			}
+			if _, err := json.Marshal(*in.Value); err != nil {
+				return nil, entity.ActivityEvent{}, validation("value must be valid JSON", nil)
+			}
+		}
+		field.Type = resultingType
+		if field.Type != "json" {
+			field.Value = nil
+		} else if in.Value != nil {
+			field.Value = *in.Value
 		}
 		if in.State != nil {
 			if !validState(*in.State) {

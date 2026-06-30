@@ -146,8 +146,13 @@ type updateFieldRequest struct {
 	Required    *bool           `json:"required"`
 	State       *string         `json:"state"`
 	Description *optionalString `json:"description"`
+	Value       optionalJSON    `json:"value"`
 }
 type optionalString struct{ Value *string }
+type optionalJSON struct {
+	Set   bool
+	Value any
+}
 
 func (o *optionalString) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
@@ -162,6 +167,11 @@ func (o *optionalString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (o *optionalJSON) UnmarshalJSON(data []byte) error {
+	o.Set = true
+	return json.Unmarshal(data, &o.Value)
+}
+
 func (h *Handler) UpdateField(c *gin.Context) {
 	var request updateFieldRequest
 	if !bind(c, &request) {
@@ -171,7 +181,11 @@ func (h *Handler) UpdateField(c *gin.Context) {
 	if request.Description != nil {
 		description = &request.Description.Value
 	}
-	result, err := h.serviceFor(c).UpdateField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c), usecase.UpdateFieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: description})
+	var value *any
+	if request.Value.Set {
+		value = &request.Value.Value
+	}
+	result, err := h.serviceFor(c).UpdateField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c), usecase.UpdateFieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: description, Value: value})
 	h.writeMutation(c, result, err, http.StatusOK)
 }
 
