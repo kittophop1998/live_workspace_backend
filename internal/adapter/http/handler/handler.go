@@ -1,0 +1,302 @@
+package handler
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"kingdom_manager/backend/internal/adapter/http/middleware"
+	"kingdom_manager/backend/internal/usecase"
+)
+
+type Handler struct {
+	service *usecase.Service
+}
+
+func New(service *usecase.Service) *Handler { return &Handler{service: service} }
+
+func success(c *gin.Context, status int, data any) {
+	c.JSON(status, gin.H{"success": true, "message": "OK", "data": data})
+}
+
+func (h *Handler) Workspace(c *gin.Context) {
+	ws, err := h.service.Snapshot(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	resources := make([]resourceResponse, 0, len(ws.Resources))
+	for _, value := range ws.Resources {
+		resources = append(resources, resourceDTO(value))
+	}
+	comments := make([]commentResponse, 0, len(ws.Comments))
+	for _, value := range ws.Comments {
+		comments = append(comments, commentDTO(value))
+	}
+	activity := make([]activityResponse, 0, len(ws.Activity))
+	for i := len(ws.Activity) - 1; i >= 0; i-- {
+		activity = append(activity, activityDTO(ws.Activity[i]))
+	}
+	collaborators := make([]collaboratorResponse, 0, len(ws.Collaborators))
+	for _, value := range ws.Collaborators {
+		collaborators = append(collaborators, collaboratorDTO(value))
+	}
+	success(c, http.StatusOK, gin.H{"rev": ws.Rev, "workspace_id": ws.ID, "resources": resources, "comments": comments, "activity": activity, "collaborators": collaborators, "server_time": time.Now().UTC()})
+}
+
+func (h *Handler) Collaborators(c *gin.Context) {
+	ws, err := h.service.Snapshot(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	items := make([]collaboratorResponse, 0, len(ws.Collaborators))
+	for _, value := range ws.Collaborators {
+		items = append(items, collaboratorDTO(value))
+	}
+	success(c, http.StatusOK, items)
+}
+
+func (h *Handler) Me(c *gin.Context) {
+	value, err := h.service.Me(c.Request.Context(), middleware.CollaboratorID(c))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, http.StatusOK, collaboratorDTO(*value))
+}
+
+func (h *Handler) ListResources(c *gin.Context) {
+	items, err := h.service.Resources(c.Request.Context(), c.Query("kind"))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	out := make([]resourceResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, resourceDTO(item))
+	}
+	success(c, http.StatusOK, out)
+}
+
+func (h *Handler) GetResource(c *gin.Context) {
+	value, err := h.service.Resource(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, http.StatusOK, resourceDTO(*value))
+}
+
+type createResourceRequest struct {
+	Name   string `json:"name" binding:"required"`
+	Kind   string `json:"kind" binding:"required"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+}
+
+func (h *Handler) CreateResource(c *gin.Context) {
+	var request createResourceRequest
+	if !bind(c, &request) {
+		return
+	}
+	result, err := h.service.CreateResource(c.Request.Context(), middleware.CollaboratorID(c), revision(c), usecase.CreateResourceInput{Name: request.Name, Kind: request.Kind, Method: request.Method, Path: request.Path})
+	h.writeMutation(c, result, err, http.StatusCreated)
+}
+
+type updateResourceRequest struct {
+	Name   *string `json:"name"`
+	Method *string `json:"method"`
+	Path   *string `json:"path"`
+}
+
+func (h *Handler) UpdateResource(c *gin.Context) {
+	var request updateResourceRequest
+	if !bind(c, &request) {
+		return
+	}
+	result, err := h.service.UpdateResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.UpdateResourceInput{Name: request.Name, Method: request.Method, Path: request.Path})
+	h.writeMutation(c, result, err, http.StatusOK)
+}
+
+func (h *Handler) DeleteResource(c *gin.Context) {
+	result, err := h.service.DeleteResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, http.StatusOK, gin.H{"rev": result.Rev, "resource_id": c.Param("id")})
+}
+
+type addFieldRequest struct {
+	Key         string  `json:"key" binding:"required"`
+	Type        string  `json:"type" binding:"required"`
+	Required    bool    `json:"required"`
+	State       string  `json:"state"`
+	Description *string `json:"description"`
+}
+
+func (h *Handler) AddField(c *gin.Context) {
+	var request addFieldRequest
+	if !bind(c, &request) {
+		return
+	}
+	result, err := h.service.AddField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.FieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: request.Description})
+	h.writeMutation(c, result, err, http.StatusCreated)
+}
+
+type updateFieldRequest struct {
+	Key         *string         `json:"key"`
+	Type        *string         `json:"type"`
+	Required    *bool           `json:"required"`
+	State       *string         `json:"state"`
+	Description *optionalString `json:"description"`
+}
+type optionalString struct{ Value *string }
+
+func (o *optionalString) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	o.Value = &value
+	return nil
+}
+
+func (h *Handler) UpdateField(c *gin.Context) {
+	var request updateFieldRequest
+	if !bind(c, &request) {
+		return
+	}
+	var description **string
+	if request.Description != nil {
+		description = &request.Description.Value
+	}
+	result, err := h.service.UpdateField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c), usecase.UpdateFieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: description})
+	h.writeMutation(c, result, err, http.StatusOK)
+}
+
+func (h *Handler) DeleteField(c *gin.Context) {
+	result, err := h.service.DeleteField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c))
+	h.writeMutation(c, result, err, http.StatusOK)
+}
+
+func (h *Handler) Comments(c *gin.Context) {
+	items, err := h.service.Comments(c.Request.Context(), c.Param("id"), c.Query("field_id"))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	out := make([]commentResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, commentDTO(item))
+	}
+	success(c, http.StatusOK, out)
+}
+
+type addCommentRequest struct {
+	FieldID *string `json:"field_id"`
+	Body    string  `json:"body" binding:"required"`
+}
+
+func (h *Handler) AddComment(c *gin.Context) {
+	var request addCommentRequest
+	if !bind(c, &request) {
+		return
+	}
+	result, err := h.service.AddComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), request.FieldID, request.Body)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, http.StatusCreated, gin.H{"rev": result.Rev, "comment": commentDTO(*result.Comment)})
+}
+
+func (h *Handler) DeleteComment(c *gin.Context) {
+	result, err := h.service.DeleteComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, http.StatusOK, gin.H{"rev": result.Rev, "comment_id": c.Param("id")})
+}
+
+func (h *Handler) Activity(c *gin.Context) {
+	page, limit := positiveInt(c.Query("page"), 1), positiveInt(c.Query("limit"), 50)
+	if limit > 100 {
+		limit = 100
+	}
+	items, total, err := h.service.Activity(c.Request.Context(), c.Query("resource_id"), page, limit)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	out := make([]activityResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, activityDTO(item))
+	}
+	success(c, http.StatusOK, gin.H{"items": out, "page_info": gin.H{"page": page, "limit": limit, "total": total}})
+}
+
+func (h *Handler) writeMutation(c *gin.Context, result *usecase.MutationResult, err error, status int) {
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, status, gin.H{"rev": result.Rev, "resource": resourceDTO(*result.Resource)})
+}
+
+func bind(c *gin.Context, target any) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid request body", "data": nil, "error": gin.H{"code": "VALIDATION_ERROR", "details": err.Error()}})
+		return false
+	}
+	return true
+}
+
+func revision(c *gin.Context) *int64 {
+	value := c.GetHeader("If-Match")
+	if value == "" {
+		return nil
+	}
+	rev, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &rev
+}
+func positiveInt(value string, fallback int) int {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		return fallback
+	}
+	return parsed
+}
+
+func writeError(c *gin.Context, err error) {
+	status, code, message := http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error"
+	var details map[string]any
+	var appErr *usecase.Error
+	if errors.As(err, &appErr) {
+		message, details = appErr.Message, appErr.Details
+	}
+	switch {
+	case errors.Is(err, usecase.ErrValidation):
+		status, code = http.StatusUnprocessableEntity, "VALIDATION_ERROR"
+	case errors.Is(err, usecase.ErrNotFound):
+		status, code = http.StatusNotFound, "NOT_FOUND"
+	case errors.Is(err, usecase.ErrForbidden):
+		status, code = http.StatusForbidden, "FORBIDDEN"
+	case errors.Is(err, usecase.ErrRevConflict):
+		status, code = http.StatusConflict, "REV_CONFLICT"
+	}
+	c.JSON(status, gin.H{"success": false, "message": message, "data": nil, "error": gin.H{"code": code, "details": details}})
+}
