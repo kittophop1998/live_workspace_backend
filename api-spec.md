@@ -326,6 +326,19 @@ Request (any subset):
 ```
 Response `data`: `{ "rev": 43, "resource": { "...Resource" } }`
 
+> The `path` and `method` are editable for the lifetime of an endpoint — a newly
+> created endpoint is seeded with `method:"GET"`, `path:"/api/v1/new"` and the
+> client renames/repaths it via this `PATCH`. There is **no** reserved or
+> immutable path; `/api/v1/new` is just a placeholder default.
+
+### DELETE `/resources/{id}`
+Permanently removes a resource (endpoint / database / model) and all of its
+fields. Hard delete — the resource is gone, not soft-flagged (unlike a field's
+soft-delete rule). Emits a `resource.deleted` over WebSocket (§4) and an
+`ActivityEvent` (`verb:"removed"`).
+
+Response `data`: `{ "rev": 45, "resource_id": "res_create_order" }`
+
 ### POST `/resources/{id}/fields`
 Request:
 ```json

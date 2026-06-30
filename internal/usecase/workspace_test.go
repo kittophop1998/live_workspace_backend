@@ -104,3 +104,25 @@ func TestMutationRejectsStaleRevision(t *testing.T) {
 		t.Fatalf("conflict changed revision to %d", repository.workspace.Rev)
 	}
 }
+
+func TestCreateEndpointUsesEditableDefaults(t *testing.T) {
+	service, repository := newTestService()
+
+	result, err := service.CreateResource(context.Background(), "col_test", nil, CreateResourceInput{
+		Name: "New endpoint",
+		Kind: string(entity.KindEndpoint),
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Resource.Method == nil || *result.Resource.Method != "GET" {
+		t.Fatalf("expected default method GET, got %v", result.Resource.Method)
+	}
+	if result.Resource.Path == nil || *result.Resource.Path != "/api/v1/new" {
+		t.Fatalf("expected default path /api/v1/new, got %v", result.Resource.Path)
+	}
+	if repository.workspace.Resources[1].ID != result.Resource.ID {
+		t.Fatal("created endpoint was not persisted")
+	}
+}

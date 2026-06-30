@@ -126,6 +126,12 @@ func (s *Service) CreateResource(ctx context.Context, actorID string, expected *
 		return nil, validation("name and valid kind are required", nil)
 	}
 	if in.Kind == string(entity.KindEndpoint) {
+		if in.Method == "" {
+			in.Method = "GET"
+		}
+		if in.Path == "" {
+			in.Path = "/api/v1/new"
+		}
 		if !validMethod(in.Method) || !strings.HasPrefix(in.Path, "/") {
 			return nil, validation("endpoint requires a valid method and absolute path", nil)
 		}

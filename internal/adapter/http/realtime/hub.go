@@ -223,7 +223,7 @@ func eventPayload(event usecase.Event) any {
 			return map[string]any{"rev": value.Rev, "comment": commentPayload(*value.Comment)}
 		}
 	case entity.ActivityEvent:
-		return activityPayload(value)
+		return map[string]any{"activity": activityPayload(value)}
 	}
 	return event.Payload
 }
