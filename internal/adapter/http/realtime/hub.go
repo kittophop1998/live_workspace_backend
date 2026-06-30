@@ -20,9 +20,10 @@ type message struct {
 }
 
 type client struct {
-	connection *websocket.Conn
-	send       chan message
-	clientID   string
+	connection  *websocket.Conn
+	send        chan message
+	clientID    string
+	workspaceID string
 }
 
 type Hub struct {
@@ -37,6 +38,7 @@ type presence struct {
 	ClientID       string `json:"client_id"`
 	CollaboratorID string `json:"collaborator_id"`
 	TS             int64  `json:"ts"`
+	WorkspaceID    string `json:"-"`
 }
 
 func NewHub(allowedOrigins []string) *Hub {
@@ -55,7 +57,7 @@ func NewHub(allowedOrigins []string) *Hub {
 func (h *Hub) SetService(service *usecase.Service) { h.service = service }
 
 func (h *Hub) Publish(event usecase.Event) {
-	h.broadcast(message{Type: event.Type, Payload: eventPayload(event)})
+	h.broadcast(event.WorkspaceID, message{Type: event.Type, Payload: eventPayload(event)})
 }
 
 func (h *Hub) Serve(c *gin.Context) {
@@ -63,12 +65,13 @@ func (h *Hub) Serve(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	current := &client{connection: connection, send: make(chan message, 32)}
+	workspaceID := middleware.WorkspaceID(c)
+	current := &client{connection: connection, send: make(chan message, 32), workspaceID: workspaceID}
 	h.mu.Lock()
 	h.clients[current] = struct{}{}
 	h.mu.Unlock()
 
-	ws, err := h.service.Snapshot(c.Request.Context())
+	ws, err := h.service.ForWorkspace(workspaceID).Snapshot(c.Request.Context())
 	if err != nil {
 		_ = connection.Close()
 		return
@@ -113,14 +116,15 @@ func (h *Hub) readLoop(current *client, authenticatedID string) {
 				continue
 			}
 			input.Payload.TS = time.Now().UnixMilli()
+			input.Payload.WorkspaceID = current.workspaceID
 			current.clientID = input.Payload.ClientID
 			h.mu.Lock()
-			h.presence[current.clientID] = input.Payload
+			h.presence[presenceKey(current.workspaceID, current.clientID)] = input.Payload
 			h.mu.Unlock()
-			h.broadcast(message{Type: "presence.update", Payload: input.Payload})
+			h.broadcast(current.workspaceID, message{Type: "presence.update", Payload: input.Payload})
 		case "presence.leave":
 			if input.Payload.ClientID == current.clientID {
-				h.leave(current.clientID)
+				h.leave(current.workspaceID, current.clientID)
 			}
 		}
 	}
@@ -153,48 +157,55 @@ func (h *Hub) remove(current *client) {
 		close(current.send)
 	}
 	h.mu.Unlock()
-	h.leave(current.clientID)
+	h.leave(current.workspaceID, current.clientID)
 	_ = current.connection.Close()
 }
 
-func (h *Hub) leave(clientID string) {
+func (h *Hub) leave(workspaceID, clientID string) {
 	if clientID == "" {
 		return
 	}
 	h.mu.Lock()
-	_, exists := h.presence[clientID]
-	delete(h.presence, clientID)
+	key := presenceKey(workspaceID, clientID)
+	_, exists := h.presence[key]
+	delete(h.presence, key)
 	h.mu.Unlock()
 	if exists {
-		h.broadcast(message{Type: "presence.leave", Payload: map[string]any{"client_id": clientID}})
+		h.broadcast(workspaceID, message{Type: "presence.leave", Payload: map[string]any{"client_id": clientID}})
 	}
 }
 
 func (h *Hub) prune() {
 	cutoff := time.Now().Add(-8 * time.Second).UnixMilli()
 	h.mu.RLock()
-	stale := make([]string, 0)
-	for id, value := range h.presence {
+	type stalePresence struct{ workspaceID, clientID string }
+	stale := make([]stalePresence, 0)
+	for _, value := range h.presence {
 		if value.TS < cutoff {
-			stale = append(stale, id)
+			stale = append(stale, stalePresence{value.WorkspaceID, value.ClientID})
 		}
 	}
 	h.mu.RUnlock()
-	for _, id := range stale {
-		h.leave(id)
+	for _, item := range stale {
+		h.leave(item.workspaceID, item.clientID)
 	}
 }
 
-func (h *Hub) broadcast(output message) {
+func (h *Hub) broadcast(workspaceID string, output message) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for current := range h.clients {
+		if current.workspaceID != workspaceID {
+			continue
+		}
 		select {
 		case current.send <- output:
 		default:
 		}
 	}
 }
+
+func presenceKey(workspaceID, clientID string) string { return workspaceID + ":" + clientID }
 
 func eventPayload(event usecase.Event) any {
 	switch value := event.Payload.(type) {

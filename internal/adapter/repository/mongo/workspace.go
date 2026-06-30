@@ -58,7 +58,7 @@ func (r *WorkspaceRepository) Get(ctx context.Context, id string) (*entity.Works
 	var document workspaceDocument
 	if err := r.collection.FindOne(ctx, bson.M{"_id": id}).Decode(&document); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("workspace %q not found", id)
+			return nil, port.ErrWorkspaceNotFound
 		}
 		return nil, fmt.Errorf("find workspace: %w", err)
 	}
@@ -69,6 +69,16 @@ func (r *WorkspaceRepository) CreateIfAbsent(ctx context.Context, workspace *ent
 	_, err := r.collection.UpdateOne(ctx, bson.M{"_id": workspace.ID}, bson.M{"$setOnInsert": toDocument(workspace)}, options.Update().SetUpsert(true))
 	if err != nil {
 		return fmt.Errorf("seed workspace: %w", err)
+	}
+	return nil
+}
+
+func (r *WorkspaceRepository) Create(ctx context.Context, workspace *entity.Workspace) error {
+	if _, err := r.collection.InsertOne(ctx, toDocument(workspace)); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return port.ErrWorkspaceExists
+		}
+		return fmt.Errorf("insert workspace: %w", err)
 	}
 	return nil
 }

@@ -20,8 +20,9 @@ var fieldTypes = map[string]bool{
 }
 
 type Event struct {
-	Type    string
-	Payload any
+	Type        string
+	Payload     any
+	WorkspaceID string
 }
 
 type Publisher interface {
@@ -37,6 +38,10 @@ type Service struct {
 
 func NewService(repo port.WorkspaceRepository, workspaceID string, publisher Publisher) *Service {
 	return &Service{repo: repo, workspaceID: workspaceID, publisher: publisher, now: func() time.Time { return time.Now().UTC() }}
+}
+
+func (s *Service) ForWorkspace(workspaceID string) *Service {
+	return &Service{repo: s.repo, workspaceID: workspaceID, publisher: s.publisher, now: s.now}
 }
 
 func (s *Service) Snapshot(ctx context.Context) (*entity.Workspace, error) {
@@ -395,8 +400,8 @@ func (s *Service) mutateResource(ctx context.Context, actorID string, expected *
 	}
 	result := &MutationResult{Rev: ws.Rev, Resource: resource}
 	if s.publisher != nil {
-		s.publisher.Publish(Event{Type: eventType, Payload: result})
-		s.publisher.Publish(Event{Type: "activity.created", Payload: event})
+		s.publisher.Publish(Event{Type: eventType, Payload: result, WorkspaceID: s.workspaceID})
+		s.publisher.Publish(Event{Type: "activity.created", Payload: event, WorkspaceID: s.workspaceID})
 	}
 	return result, nil
 }

@@ -26,6 +26,7 @@ func (f *fakeRepository) Get(context.Context, string) (*entity.Workspace, error)
 	return &copy, nil
 }
 func (f *fakeRepository) CreateIfAbsent(context.Context, *entity.Workspace) error { return nil }
+func (f *fakeRepository) Create(context.Context, *entity.Workspace) error         { return nil }
 func (f *fakeRepository) Save(_ context.Context, ws *entity.Workspace, expected int64) error {
 	if f.conflict || f.workspace.Rev != expected {
 		return port.ErrRevisionConflict

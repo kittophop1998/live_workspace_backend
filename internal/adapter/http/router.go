@@ -18,6 +18,8 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		AllowHeaders: []string{"Authorization", "Content-Type", "If-Match"},
 	}))
 	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	router.POST("/api/v1/rooms", h.CreateRoom)
+	router.POST("/api/v1/rooms/join", h.JoinRoom)
 	v1 := router.Group("/api/v1", auth.Handler())
 	{
 		v1.GET("/workspace", h.Workspace)

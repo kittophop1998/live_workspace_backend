@@ -3,8 +3,34 @@ package handler
 import (
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"kingdom_manager/backend/internal/domain/entity"
 )
+
+func workspaceDTO(ws *entity.Workspace) gin.H {
+	resources := make([]resourceResponse, 0, len(ws.Resources))
+	for _, value := range ws.Resources {
+		resources = append(resources, resourceDTO(value))
+	}
+	comments := make([]commentResponse, 0, len(ws.Comments))
+	for _, value := range ws.Comments {
+		comments = append(comments, commentDTO(value))
+	}
+	activity := make([]activityResponse, 0, len(ws.Activity))
+	for i := len(ws.Activity) - 1; i >= 0; i-- {
+		activity = append(activity, activityDTO(ws.Activity[i]))
+	}
+	collaborators := make([]collaboratorResponse, 0, len(ws.Collaborators))
+	for _, value := range ws.Collaborators {
+		collaborators = append(collaborators, collaboratorDTO(value))
+	}
+	return gin.H{
+		"rev": ws.Rev, "workspace_id": ws.ID, "resources": resources,
+		"comments": comments, "activity": activity, "collaborators": collaborators,
+		"server_time": time.Now().UTC(),
+	}
+}
 
 type collaboratorResponse struct {
 	ID    string `json:"id"`

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,42 +13,34 @@ import (
 )
 
 type Handler struct {
-	service *usecase.Service
+	service     *usecase.Service
+	roomService *usecase.RoomService
+	auth        *middleware.Auth
 }
 
-func New(service *usecase.Service) *Handler { return &Handler{service: service} }
+func New(service *usecase.Service, roomService *usecase.RoomService, auth *middleware.Auth) *Handler {
+	return &Handler{service: service, roomService: roomService, auth: auth}
+}
+
+func (h *Handler) serviceFor(c *gin.Context) *usecase.Service {
+	return h.service.ForWorkspace(middleware.WorkspaceID(c))
+}
 
 func success(c *gin.Context, status int, data any) {
 	c.JSON(status, gin.H{"success": true, "message": "OK", "data": data})
 }
 
 func (h *Handler) Workspace(c *gin.Context) {
-	ws, err := h.service.Snapshot(c.Request.Context())
+	ws, err := h.serviceFor(c).Snapshot(c.Request.Context())
 	if err != nil {
 		writeError(c, err)
 		return
 	}
-	resources := make([]resourceResponse, 0, len(ws.Resources))
-	for _, value := range ws.Resources {
-		resources = append(resources, resourceDTO(value))
-	}
-	comments := make([]commentResponse, 0, len(ws.Comments))
-	for _, value := range ws.Comments {
-		comments = append(comments, commentDTO(value))
-	}
-	activity := make([]activityResponse, 0, len(ws.Activity))
-	for i := len(ws.Activity) - 1; i >= 0; i-- {
-		activity = append(activity, activityDTO(ws.Activity[i]))
-	}
-	collaborators := make([]collaboratorResponse, 0, len(ws.Collaborators))
-	for _, value := range ws.Collaborators {
-		collaborators = append(collaborators, collaboratorDTO(value))
-	}
-	success(c, http.StatusOK, gin.H{"rev": ws.Rev, "workspace_id": ws.ID, "resources": resources, "comments": comments, "activity": activity, "collaborators": collaborators, "server_time": time.Now().UTC()})
+	success(c, http.StatusOK, workspaceDTO(ws))
 }
 
 func (h *Handler) Collaborators(c *gin.Context) {
-	ws, err := h.service.Snapshot(c.Request.Context())
+	ws, err := h.serviceFor(c).Snapshot(c.Request.Context())
 	if err != nil {
 		writeError(c, err)
 		return
@@ -62,7 +53,7 @@ func (h *Handler) Collaborators(c *gin.Context) {
 }
 
 func (h *Handler) Me(c *gin.Context) {
-	value, err := h.service.Me(c.Request.Context(), middleware.CollaboratorID(c))
+	value, err := h.serviceFor(c).Me(c.Request.Context(), middleware.CollaboratorID(c))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -71,7 +62,7 @@ func (h *Handler) Me(c *gin.Context) {
 }
 
 func (h *Handler) ListResources(c *gin.Context) {
-	items, err := h.service.Resources(c.Request.Context(), c.Query("kind"))
+	items, err := h.serviceFor(c).Resources(c.Request.Context(), c.Query("kind"))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -84,7 +75,7 @@ func (h *Handler) ListResources(c *gin.Context) {
 }
 
 func (h *Handler) GetResource(c *gin.Context) {
-	value, err := h.service.Resource(c.Request.Context(), c.Param("id"))
+	value, err := h.serviceFor(c).Resource(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -104,7 +95,7 @@ func (h *Handler) CreateResource(c *gin.Context) {
 	if !bind(c, &request) {
 		return
 	}
-	result, err := h.service.CreateResource(c.Request.Context(), middleware.CollaboratorID(c), revision(c), usecase.CreateResourceInput{Name: request.Name, Kind: request.Kind, Method: request.Method, Path: request.Path})
+	result, err := h.serviceFor(c).CreateResource(c.Request.Context(), middleware.CollaboratorID(c), revision(c), usecase.CreateResourceInput{Name: request.Name, Kind: request.Kind, Method: request.Method, Path: request.Path})
 	h.writeMutation(c, result, err, http.StatusCreated)
 }
 
@@ -119,12 +110,12 @@ func (h *Handler) UpdateResource(c *gin.Context) {
 	if !bind(c, &request) {
 		return
 	}
-	result, err := h.service.UpdateResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.UpdateResourceInput{Name: request.Name, Method: request.Method, Path: request.Path})
+	result, err := h.serviceFor(c).UpdateResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.UpdateResourceInput{Name: request.Name, Method: request.Method, Path: request.Path})
 	h.writeMutation(c, result, err, http.StatusOK)
 }
 
 func (h *Handler) DeleteResource(c *gin.Context) {
-	result, err := h.service.DeleteResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
+	result, err := h.serviceFor(c).DeleteResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -145,7 +136,7 @@ func (h *Handler) AddField(c *gin.Context) {
 	if !bind(c, &request) {
 		return
 	}
-	result, err := h.service.AddField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.FieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: request.Description})
+	result, err := h.serviceFor(c).AddField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.FieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: request.Description})
 	h.writeMutation(c, result, err, http.StatusCreated)
 }
 
@@ -180,17 +171,17 @@ func (h *Handler) UpdateField(c *gin.Context) {
 	if request.Description != nil {
 		description = &request.Description.Value
 	}
-	result, err := h.service.UpdateField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c), usecase.UpdateFieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: description})
+	result, err := h.serviceFor(c).UpdateField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c), usecase.UpdateFieldInput{Key: request.Key, Type: request.Type, Required: request.Required, State: request.State, Description: description})
 	h.writeMutation(c, result, err, http.StatusOK)
 }
 
 func (h *Handler) DeleteField(c *gin.Context) {
-	result, err := h.service.DeleteField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c))
+	result, err := h.serviceFor(c).DeleteField(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), c.Param("field_id"), revision(c))
 	h.writeMutation(c, result, err, http.StatusOK)
 }
 
 func (h *Handler) Comments(c *gin.Context) {
-	items, err := h.service.Comments(c.Request.Context(), c.Param("id"), c.Query("field_id"))
+	items, err := h.serviceFor(c).Comments(c.Request.Context(), c.Param("id"), c.Query("field_id"))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -212,7 +203,7 @@ func (h *Handler) AddComment(c *gin.Context) {
 	if !bind(c, &request) {
 		return
 	}
-	result, err := h.service.AddComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), request.FieldID, request.Body)
+	result, err := h.serviceFor(c).AddComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), request.FieldID, request.Body)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -221,7 +212,7 @@ func (h *Handler) AddComment(c *gin.Context) {
 }
 
 func (h *Handler) DeleteComment(c *gin.Context) {
-	result, err := h.service.DeleteComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
+	result, err := h.serviceFor(c).DeleteComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -234,7 +225,7 @@ func (h *Handler) Activity(c *gin.Context) {
 	if limit > 100 {
 		limit = 100
 	}
-	items, total, err := h.service.Activity(c.Request.Context(), c.Query("resource_id"), page, limit)
+	items, total, err := h.serviceFor(c).Activity(c.Request.Context(), c.Query("resource_id"), page, limit)
 	if err != nil {
 		writeError(c, err)
 		return

@@ -22,7 +22,7 @@ func Load() (Config, error) {
 		MongoURI:        env("MONGO_URI", "mongodb://localhost:27017"),
 		MongoDatabase:   env("MONGO_DATABASE", "fark_noi"),
 		WorkspaceID:     env("WORKSPACE_ID", "wsp_demo"),
-		JWTSecret:       os.Getenv("JWT_SECRET"),
+		JWTSecret:       env("JWT_SECRET", "local-development-secret-change-me"),
 		DevCollaborator: env("DEV_COLLABORATOR_ID", "col_demo"),
 		AllowedOrigins:  splitCSV(env("CORS_ORIGINS", "http://localhost:3000")),
 	}

@@ -1,22 +1,38 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 const CollaboratorKey = "collaborator_id"
+const WorkspaceKey = "workspace_id"
 
 type Auth struct {
-	secret      []byte
-	devIdentity string
+	secret   []byte
+	tokenTTL time.Duration
 }
 
-func NewAuth(secret, devIdentity string) *Auth {
-	return &Auth{secret: []byte(secret), devIdentity: devIdentity}
+func NewAuth(secret string, tokenTTL time.Duration) *Auth {
+	return &Auth{secret: []byte(secret), tokenTTL: tokenTTL}
+}
+
+func (a *Auth) Issue(collaboratorID, workspaceID string) (string, error) {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"sub": collaboratorID, "workspace_id": workspaceID,
+		"iat": now.Unix(), "exp": now.Add(a.tokenTTL).Unix(),
+	}
+	value, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.secret)
+	if err != nil {
+		return "", fmt.Errorf("sign access token: %w", err)
+	}
+	return value, nil
 }
 
 func (a *Auth) Handler() gin.HandlerFunc {
@@ -24,11 +40,6 @@ func (a *Auth) Handler() gin.HandlerFunc {
 		tokenText := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
 		if tokenText == "" {
 			tokenText = c.Query("token")
-		}
-		if len(a.secret) == 0 && tokenText == "" {
-			c.Set(CollaboratorKey, a.devIdentity)
-			c.Next()
-			return
 		}
 		if tokenText == "" {
 			abortUnauthorized(c)
@@ -49,9 +60,22 @@ func (a *Auth) Handler() gin.HandlerFunc {
 			abortUnauthorized(c)
 			return
 		}
+		claims, ok := token.Claims.(jwt.MapClaims)
+		workspaceID, okWorkspace := claims["workspace_id"].(string)
+		if !ok || !okWorkspace || workspaceID == "" {
+			abortUnauthorized(c)
+			return
+		}
 		c.Set(CollaboratorKey, subject)
+		c.Set(WorkspaceKey, workspaceID)
 		c.Next()
 	}
+}
+
+func WorkspaceID(c *gin.Context) string {
+	value, _ := c.Get(WorkspaceKey)
+	id, _ := value.(string)
+	return id
 }
 
 func abortUnauthorized(c *gin.Context) {

@@ -24,14 +24,13 @@ the service layer normalizes).
 Configured via `NEXT_PUBLIC_API_URL` (default `http://localhost:8080/api/v1`).
 
 ### Authentication
-- **Bearer JWT**, optional for local dev:
+- Create a permanent room with `POST /rooms`, or join one with `POST /rooms/join`.
+- Both endpoints return a **Bearer JWT** scoped to the room and collaborator:
   ```
   Authorization: Bearer <access_token>
   ```
-- The token resolves the current **Collaborator** (the "me" identity). For
-  local/mock mode a fixed collaborator is assumed (e.g. `col_demo`).
-- A workspace is the single shared document for MVP (`workspace_id = "wsp_demo"`).
-  Multi-workspace is a future extension (prefix routes with `/workspaces/{id}`).
+- The token resolves the current **Collaborator** (the "me" identity) and room.
+  A token cannot read or mutate another room.
 
 ### Timestamps
 All timestamps are ISO-8601 UTC (`2026-06-30T08:00:00Z`). Presence heartbeats may
@@ -206,6 +205,15 @@ plus the roster).
 > All paths relative to `/api/v1`; all responses use the §1 envelope. Mutations
 > bump `rev`, set `updated_at`/`updated_by`, append an `ActivityEvent`, and push
 > the change over WebSocket (§4).
+
+### Rooms (public)
+| method | path | purpose |
+|--------|------|---------|
+| POST | `/rooms` | Create a permanent room from `{ "name": "Alice" }` |
+| POST | `/rooms/join` | Join or restore identity from `{ "room_code": "123456", "name": "Bob" }` |
+
+Both responses contain `access_token`, `room_code`, `collaborator`, and `session`.
+`session` is the complete `WorkspaceSnapshot`, including all persisted discussion.
 
 ### Workspace
 | method | path | purpose |
