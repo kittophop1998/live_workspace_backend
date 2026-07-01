@@ -22,6 +22,10 @@ type runContext struct {
 
 var exprToken = regexp.MustCompile(`\$[A-Za-z0-9_.#/\-\[\]]+`)
 
+// embeddedExpr matches an Arazzo runtime expression embedded in a string, which
+// the spec wraps in braces — e.g. `Bearer {$steps.login.outputs.token}`.
+var embeddedExpr = regexp.MustCompile(`\{(\$[A-Za-z0-9_.#/\-\[\]]+)\}`)
+
 // runStep resolves, sends, and validates a single step.
 func (s *FlowService) runStep(ctx context.Context, baseURL string, step entity.FlowStep, operations map[string]operationRef, rc *runContext) entity.StepResult {
 	result := entity.StepResult{StepID: step.StepID, Outputs: map[string]any{}}
@@ -82,6 +86,7 @@ func (s *FlowService) runStep(ctx context.Context, baseURL string, step entity.F
 	}
 
 	result.Method, result.URL = method, target
+	result.RequestHeaders = headers
 	resp, err := s.exec.Exec(ctx, port.HTTPRequest{Method: method, URL: target, Headers: headers, Body: body})
 	if err != nil {
 		result.Error = err.Error()
@@ -241,28 +246,46 @@ func extractExpr(expr string, resp port.HTTPResponse, parsedBody any, rc *runCon
 	return nil
 }
 
-// resolve evaluates a single value: expression strings (with embedded $tokens)
-// are substituted; everything else passes through unchanged.
+// resolve evaluates a single value. Arazzo embeds runtime expressions in strings
+// wrapped in braces (`Bearer {$steps.login.outputs.token}`); a bare `$expr` is
+// also accepted. A whole-string expression returns the raw resolved value (keeps
+// its type); embedded expressions are substituted and their braces stripped.
 func (rc *runContext) resolve(value any) any {
 	s, ok := value.(string)
 	if !ok {
 		return value
 	}
-	trimmed := strings.TrimSpace(s)
-	// Whole-string expression → return the raw resolved value (keeps its type).
-	if strings.HasPrefix(trimmed, "$") && exprToken.FindString(trimmed) == trimmed {
-		if v, ok := rc.lookup(trimmed); ok {
+	if inner, ok := wholeExpr(strings.TrimSpace(s)); ok {
+		if v, ok := rc.lookup(inner); ok {
 			return v
 		}
 		return nil
 	}
-	// Otherwise interpolate any embedded $tokens into the string.
+	// Braced form first (strips the `{...}`), then any bare `$token` left over.
+	s = embeddedExpr.ReplaceAllStringFunc(s, func(match string) string {
+		if v, ok := rc.lookup(embeddedExpr.FindStringSubmatch(match)[1]); ok {
+			return stringifyValue(v)
+		}
+		return match
+	})
 	return exprToken.ReplaceAllStringFunc(s, func(token string) string {
 		if v, ok := rc.lookup(token); ok {
 			return stringifyValue(v)
 		}
 		return token
 	})
+}
+
+// wholeExpr reports whether s is exactly one runtime expression — bare (`$expr`)
+// or brace-wrapped (`{$expr}`) — and returns the inner expression.
+func wholeExpr(s string) (string, bool) {
+	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	if strings.HasPrefix(s, "$") && exprToken.FindString(s) == s {
+		return s, true
+	}
+	return "", false
 }
 
 // resolveDeep walks maps/slices resolving string leaves.

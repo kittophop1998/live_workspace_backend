@@ -129,10 +129,11 @@ type stepResultResponse struct {
 	Passed      bool           `json:"passed"`
 	Skipped     bool           `json:"skipped"`
 	Failures    []string       `json:"failures"`
-	Outputs     map[string]any `json:"outputs"`
-	Error       string         `json:"error,omitempty"`
-	RequestBody string         `json:"request_body,omitempty"`
-	Response    string         `json:"response,omitempty"`
+	Outputs        map[string]any    `json:"outputs"`
+	Error          string            `json:"error,omitempty"`
+	RequestHeaders map[string]string `json:"request_headers,omitempty"`
+	RequestBody    string            `json:"request_body,omitempty"`
+	Response       string            `json:"response,omitempty"`
 }
 type runResponse struct {
 	ID          string               `json:"id"`
@@ -155,7 +156,7 @@ func runDTO(run *entity.FlowRun) runResponse {
 			StepID: step.StepID, Method: step.Method, URL: step.URL, Status: step.Status,
 			DurationMs: step.DurationMs, Passed: step.Passed, Skipped: step.Skipped,
 			Failures: emptyIfNil(step.Failures), Outputs: step.Outputs, Error: step.Error,
-			RequestBody: step.RequestBody, Response: step.Response,
+			RequestHeaders: step.RequestHeaders, RequestBody: step.RequestBody, Response: step.Response,
 		})
 	}
 	return out

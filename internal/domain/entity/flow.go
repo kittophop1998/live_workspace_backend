@@ -63,18 +63,19 @@ type FlowDefinition struct {
 
 // StepResult is the outcome of executing one step during a run.
 type StepResult struct {
-	StepID      string
-	Method      string
-	URL         string
-	Status      int
-	DurationMs  int64
-	Passed      bool
-	Skipped     bool
-	Failures    []string
-	Outputs     map[string]any
-	Error       string
-	RequestBody string
-	Response    string
+	StepID         string
+	Method         string
+	URL            string
+	Status         int
+	DurationMs     int64
+	Passed         bool
+	Skipped        bool
+	Failures       []string
+	Outputs        map[string]any
+	Error          string
+	RequestHeaders map[string]string // resolved headers actually sent (for debugging)
+	RequestBody    string
+	Response       string
 }
 
 // FlowRunStatus is the terminal state of a run.

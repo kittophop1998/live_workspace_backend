@@ -138,6 +138,53 @@ func TestRunChainsOutputsAndValidates(t *testing.T) {
 	}
 }
 
+// Arazzo wraps embedded runtime expressions in braces: the resolver must strip
+// them so the Authorization header is a clean `Bearer <token>` (not `Bearer {…}`).
+func TestRunResolvesBracedBearerExpression(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"token":"abc123"}`))
+		case "/profile":
+			gotAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"name":"alice"}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	repo := newFakeFlowRepo()
+	repo.flows["flw_1"] = &entity.FlowDefinition{
+		ID: "flw_1", WorkspaceID: "ws1", Name: "bracedAuth",
+		Steps: []entity.FlowStep{
+			{
+				StepID: "login", Method: "POST", Path: "/login",
+				Outputs:         []entity.FlowOutput{{Name: "token", From: "$response.body#/token"}},
+				SuccessCriteria: []entity.Criterion{{Condition: "$statusCode == 200"}},
+			},
+			{
+				StepID: "profile", Method: "GET", Path: "/profile", DependsOn: []string{"login"},
+				Parameters:      []entity.StepParameter{{Name: "Authorization", In: "header", Value: "Bearer {$steps.login.outputs.token}"}},
+				SuccessCriteria: []entity.Criterion{{Condition: "$statusCode == 200"}},
+			},
+		},
+	}
+	service := NewFlowService(repo, nil, arazzo.Parser{}, httpexec.New(true))
+
+	run, err := service.Run(context.Background(), "ws1", "flw_1", RunInput{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if gotAuth != "Bearer abc123" {
+		t.Errorf("braced expression not resolved (braces left in header?): %q", gotAuth)
+	}
+	if run.Status != entity.RunPassed {
+		t.Fatalf("status = %s steps=%+v", run.Status, run.Steps)
+	}
+}
+
 func TestRunStopsAndSkipsAfterFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" {

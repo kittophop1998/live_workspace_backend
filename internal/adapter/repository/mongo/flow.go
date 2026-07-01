@@ -89,9 +89,10 @@ type stepResultDoc struct {
 	Skipped     bool           `bson:"skipped"`
 	Failures    []string       `bson:"failures"`
 	Outputs     map[string]any `bson:"outputs"`
-	Error       string         `bson:"error"`
-	RequestBody string         `bson:"request_body"`
-	Response    string         `bson:"response"`
+	Error          string            `bson:"error"`
+	RequestHeaders map[string]string `bson:"request_headers"`
+	RequestBody    string            `bson:"request_body"`
+	Response       string            `bson:"response"`
 }
 type flowRunDoc struct {
 	ID          string          `bson:"_id"`
@@ -252,7 +253,7 @@ func toRunDoc(run *entity.FlowRun) flowRunDoc {
 		doc.Steps = append(doc.Steps, stepResultDoc{
 			StepID: step.StepID, Method: step.Method, URL: step.URL, Status: step.Status,
 			DurationMs: step.DurationMs, Passed: step.Passed, Skipped: step.Skipped, Failures: step.Failures,
-			Outputs: step.Outputs, Error: step.Error, RequestBody: step.RequestBody, Response: step.Response,
+			Outputs: step.Outputs, Error: step.Error, RequestHeaders: step.RequestHeaders, RequestBody: step.RequestBody, Response: step.Response,
 		})
 	}
 	return doc
@@ -271,7 +272,7 @@ func toRunEntity(doc *flowRunDoc) *entity.FlowRun {
 		run.Steps = append(run.Steps, entity.StepResult{
 			StepID: step.StepID, Method: step.Method, URL: step.URL, Status: step.Status,
 			DurationMs: step.DurationMs, Passed: step.Passed, Skipped: step.Skipped, Failures: step.Failures,
-			Outputs: outputs, Error: step.Error, RequestBody: step.RequestBody, Response: step.Response,
+			Outputs: outputs, Error: step.Error, RequestHeaders: step.RequestHeaders, RequestBody: step.RequestBody, Response: step.Response,
 		})
 	}
 	return run
