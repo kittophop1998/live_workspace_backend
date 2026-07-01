@@ -139,14 +139,18 @@ A unit in the explorer: an API endpoint, a database table, or a schema model.
   "method": "POST",          // endpoints only: GET|POST|PUT|PATCH|DELETE (null otherwise)
   "path": "/api/v1/orders",  // endpoints only (null otherwise)
   "state": "breaking",       // rollup = worst state among live (non-removed) fields
+  "status": "inprogress",    // endpoints only: workflow status — draft|inprogress|testing|done (null otherwise)
   "fields": [ "...SchemaField" ],
   "updated_at": "2026-06-30T08:00:00Z",
   "updated_by": "Noah Reed"  // collaborator display name
 }
 ```
 > `state` is **server-derived** from the fields (breaking > draft > ready). Clients
-> display it; they do not author it directly. `updated_at` / `updated_by` are set
-> by the server on every mutation.
+> display it; they do not author it directly. `status` is the **client-authored**
+> workflow/progress attribute (see EndpointStatus below) — endpoints only, settable
+> via `PATCH /resources/{id}`, and used to filter the left explorer
+> (`GET /resources?status=`). `updated_at` / `updated_by` are set by the server on
+> every mutation.
 
 ### ResponseSchema (frontend-local)
 The per-status response shapes shown **below the request body** of the API Endpoint
@@ -192,10 +196,14 @@ inprogress   // being implemented
 testing       // implemented, under test (incl. E2E flows)
 done         // shipped / verified
 ```
-> **When the backend adopts this:** add a `status` field to `Resource` (endpoints
-> only; snake_case on the wire) settable via `PATCH /resources/{id}`, normalize it
-> in `src/services/workspace.service.ts`, and the local store becomes a
-> cache/fallback.
+The **left explorer filters by this status** (chips: All / Draft / In Progress /
+Testing / Done) — the filter is endpoint-only (databases have no workflow status).
+While it stays frontend-local the filter runs client-side; once the backend adopts
+the field it is driven by `GET /resources?status=<value>` (§3).
+> **When the backend adopts this:** promote `status` to a first-class `Resource`
+> field (endpoints only; snake_case on the wire) — settable via
+> `PATCH /resources/{id}`, filterable via `GET /resources?status=`, normalized in
+> `src/services/workspace.service.ts` — and the local store becomes a cache/fallback.
 
 ### Comment
 Inline discussion, optionally anchored to a single field.
@@ -340,7 +348,7 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 ### Resources
 | method | path | purpose |
 |--------|------|---------|
-| GET | `/resources` | List resources (`?kind=endpoint\|database\|model` optional) |
+| GET | `/resources` | List resources (`?kind=endpoint\|database\|model` and/or `?status=draft\|inprogress\|testing\|done` optional; `status` applies to endpoints only) |
 | GET | `/resources/{id}` | One resource (with fields) |
 | POST | `/resources` | Create a resource |
 | PATCH | `/resources/{id}` | Rename / set `method` / `path` |
@@ -530,6 +538,7 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 | Endpoint method tag + path | `Resource.method`, `Resource.path` |
 | Resource state dot / badge | `Resource.state` (server rollup) |
 | Endpoint status pill (Draft / In Progress / Testing / Done) | `EndpointStatus` (frontend-local, see §2) |
+| Explorer status filter chips (All / Draft / In Progress / Testing / Done) | `EndpointStatus` (frontend-local; backend: `GET /resources?status=`) |
 | Blueprint field row | `SchemaField` (`key`, `type`, `required`, `description`) |
 | `[Draft] [Ready] [Breaking Change]` badge | `SchemaField.state` |
 | Diff line-weight / colour | `SchemaField.change` |

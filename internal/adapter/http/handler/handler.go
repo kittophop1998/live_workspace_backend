@@ -65,7 +65,7 @@ func (h *Handler) Me(c *gin.Context) {
 }
 
 func (h *Handler) ListResources(c *gin.Context) {
-	items, err := h.serviceFor(c).Resources(c.Request.Context(), c.Query("kind"))
+	items, err := h.serviceFor(c).Resources(c.Request.Context(), c.Query("kind"), c.Query("status"))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -106,6 +106,7 @@ type updateResourceRequest struct {
 	Name   *string `json:"name"`
 	Method *string `json:"method"`
 	Path   *string `json:"path"`
+	Status *string `json:"status"`
 }
 
 func (h *Handler) UpdateResource(c *gin.Context) {
@@ -113,7 +114,7 @@ func (h *Handler) UpdateResource(c *gin.Context) {
 	if !bind(c, &request) {
 		return
 	}
-	result, err := h.serviceFor(c).UpdateResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.UpdateResourceInput{Name: request.Name, Method: request.Method, Path: request.Path})
+	result, err := h.serviceFor(c).UpdateResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), usecase.UpdateResourceInput{Name: request.Name, Method: request.Method, Path: request.Path, Status: request.Status})
 	h.writeMutation(c, result, err, http.StatusOK)
 }
 

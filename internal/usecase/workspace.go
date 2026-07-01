@@ -67,7 +67,7 @@ type CreateResourceInput struct {
 }
 
 type UpdateResourceInput struct {
-	Name, Method, Path *string
+	Name, Method, Path, Status *string
 }
 
 type FieldInput struct {
@@ -91,22 +91,26 @@ type MutationResult struct {
 	Comment  *entity.Comment
 }
 
-func (s *Service) Resources(ctx context.Context, kind string) ([]entity.Resource, error) {
+func (s *Service) Resources(ctx context.Context, kind, status string) ([]entity.Resource, error) {
 	ws, err := s.Snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if kind == "" {
-		return ws.Resources, nil
-	}
-	if !validKind(kind) {
+	if kind != "" && !validKind(kind) {
 		return nil, validation("invalid resource kind", map[string]any{"kind": kind})
+	}
+	if status != "" && !validEndpointStatus(status) {
+		return nil, validation("invalid endpoint status", map[string]any{"status": status})
 	}
 	out := make([]entity.Resource, 0)
 	for _, resource := range ws.Resources {
-		if string(resource.Kind) == kind {
-			out = append(out, resource)
+		if kind != "" && string(resource.Kind) != kind {
+			continue
 		}
+		if status != "" && (resource.Kind != entity.KindEndpoint || resource.Status == nil || string(*resource.Status) != status) {
+			continue
+		}
+		out = append(out, resource)
 	}
 	return out, nil
 }
@@ -150,6 +154,8 @@ func (s *Service) CreateResource(ctx context.Context, actorID string, expected *
 		if in.Kind == string(entity.KindEndpoint) {
 			method, path := strings.ToUpper(in.Method), in.Path
 			resource.Method, resource.Path = &method, &path
+			status := entity.EndpointStatusDraft
+			resource.Status = &status
 		}
 		ws.Resources = append(ws.Resources, resource)
 		return &ws.Resources[len(ws.Resources)-1], activity(actor, "created", resource.Name, resource.ID, now), nil
@@ -182,6 +188,13 @@ func (s *Service) UpdateResource(ctx context.Context, actorID, id string, expect
 				return nil, entity.ActivityEvent{}, validation("invalid endpoint path", nil)
 			}
 			resource.Path = in.Path
+		}
+		if in.Status != nil {
+			if resource.Kind != entity.KindEndpoint || !validEndpointStatus(*in.Status) {
+				return nil, entity.ActivityEvent{}, validation("invalid endpoint status", map[string]any{"status": *in.Status})
+			}
+			value := entity.EndpointStatus(*in.Status)
+			resource.Status = &value
 		}
 		resource.UpdatedAt, resource.UpdatedBy = s.now(), actor.Name
 		return resource, activity(actor, "edited", target, id, resource.UpdatedAt), nil
@@ -443,6 +456,14 @@ func validateField(key, fieldType, state string) error {
 
 func validKind(v string) bool  { return v == "endpoint" || v == "database" || v == "model" }
 func validState(v string) bool { return v == "draft" || v == "ready" || v == "breaking" }
+func validEndpointStatus(v string) bool {
+	switch v {
+	case "draft", "inprogress", "testing", "done":
+		return true
+	default:
+		return false
+	}
+}
 func validMethod(v string) bool {
 	switch strings.ToUpper(v) {
 	case "GET", "POST", "PUT", "PATCH", "DELETE":

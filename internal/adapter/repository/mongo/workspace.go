@@ -42,6 +42,7 @@ type fieldDocument struct {
 type resourceDocument struct {
 	ID, Name, Kind, State, UpdatedBy string
 	Method, Path                     *string
+	Status                           *string
 	Fields                           []fieldDocument
 	UpdatedAt                        time.Time
 }
@@ -108,7 +109,12 @@ func toDocument(ws *entity.Workspace) workspaceDocument {
 	}
 	doc.Resources = make([]resourceDocument, len(ws.Resources))
 	for i, value := range ws.Resources {
-		item := resourceDocument{ID: value.ID, Name: value.Name, Kind: string(value.Kind), Method: value.Method, Path: value.Path, State: string(value.State), UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
+		var status *string
+		if value.Status != nil {
+			text := string(*value.Status)
+			status = &text
+		}
+		item := resourceDocument{ID: value.ID, Name: value.Name, Kind: string(value.Kind), Method: value.Method, Path: value.Path, State: string(value.State), Status: status, UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 		item.Fields = make([]fieldDocument, len(value.Fields))
 		for j, field := range value.Fields {
 			item.Fields[j] = fieldDocument{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description, Value: field.Value}
@@ -132,7 +138,15 @@ func toEntity(doc workspaceDocument) *entity.Workspace {
 		ws.Collaborators = append(ws.Collaborators, entity.Collaborator{ID: value.ID, Name: value.Name, Role: entity.CollaboratorRole(value.Role), Color: value.Color})
 	}
 	for _, value := range doc.Resources {
-		item := entity.Resource{ID: value.ID, Name: value.Name, Kind: entity.ResourceKind(value.Kind), Method: value.Method, Path: value.Path, State: entity.FieldState(value.State), UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
+		var status *entity.EndpointStatus
+		if value.Kind == string(entity.KindEndpoint) {
+			text := entity.EndpointStatusDraft
+			if value.Status != nil {
+				text = entity.EndpointStatus(*value.Status)
+			}
+			status = &text
+		}
+		item := entity.Resource{ID: value.ID, Name: value.Name, Kind: entity.ResourceKind(value.Kind), Method: value.Method, Path: value.Path, State: entity.FieldState(value.State), Status: status, UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 		for _, field := range value.Fields {
 			item.Fields = append(item.Fields, entity.SchemaField{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change), Description: field.Description, Value: normalizeBSONValue(field.Value)})
 		}

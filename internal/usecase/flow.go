@@ -180,7 +180,7 @@ func (s *FlowService) endpointOperations(ctx context.Context, workspaceID string
 	if s.workspace == nil {
 		return out
 	}
-	resources, err := s.workspace.ForWorkspace(workspaceID).Resources(ctx, "endpoint")
+	resources, err := s.workspace.ForWorkspace(workspaceID).Resources(ctx, "endpoint", "")
 	if err != nil {
 		return out
 	}

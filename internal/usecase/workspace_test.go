@@ -172,7 +172,55 @@ func TestCreateEndpointUsesEditableDefaults(t *testing.T) {
 	if result.Resource.Path == nil || *result.Resource.Path != "/api/v1/new" {
 		t.Fatalf("expected default path /api/v1/new, got %v", result.Resource.Path)
 	}
+	if result.Resource.Status == nil || *result.Resource.Status != entity.EndpointStatusDraft {
+		t.Fatalf("expected default status draft, got %v", result.Resource.Status)
+	}
 	if repository.workspace.Resources[1].ID != result.Resource.ID {
 		t.Fatal("created endpoint was not persisted")
+	}
+}
+
+func TestUpdateEndpointStatusAndFilterResources(t *testing.T) {
+	service, repository := newTestService()
+	draft := entity.EndpointStatusDraft
+	repository.workspace.Resources = append(repository.workspace.Resources,
+		entity.Resource{ID: "res_draft", Name: "Draft endpoint", Kind: entity.KindEndpoint, Status: &draft},
+		entity.Resource{ID: "res_done", Name: "Done endpoint", Kind: entity.KindEndpoint, Status: &draft},
+	)
+	done := "done"
+
+	if _, err := service.UpdateResource(context.Background(), "col_test", "res_done", nil, UpdateResourceInput{Status: &done}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := service.Resources(context.Background(), "", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "res_done" {
+		t.Fatalf("unexpected filtered resources: %+v", items)
+	}
+}
+
+func TestUpdateResourceRejectsStatusForNonEndpoint(t *testing.T) {
+	service, repository := newTestService()
+	done := "done"
+
+	_, err := service.UpdateResource(context.Background(), "col_test", "res_test", nil, UpdateResourceInput{Status: &done})
+
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if repository.workspace.Rev != 3 {
+		t.Fatalf("failed mutation changed revision to %d", repository.workspace.Rev)
+	}
+}
+
+func TestResourcesRejectsInvalidStatus(t *testing.T) {
+	service, _ := newTestService()
+
+	_, err := service.Resources(context.Background(), "", "blocked")
+
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected validation error, got %v", err)
 	}
 }

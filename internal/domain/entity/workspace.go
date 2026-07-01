@@ -17,6 +17,15 @@ const (
 	KindModel    ResourceKind = "model"
 )
 
+type EndpointStatus string
+
+const (
+	EndpointStatusDraft      EndpointStatus = "draft"
+	EndpointStatusInProgress EndpointStatus = "inprogress"
+	EndpointStatusTesting    EndpointStatus = "testing"
+	EndpointStatusDone       EndpointStatus = "done"
+)
+
 type FieldState string
 
 const (
@@ -59,6 +68,7 @@ type Resource struct {
 	Method    *string
 	Path      *string
 	State     FieldState
+	Status    *EndpointStatus
 	Fields    []SchemaField
 	UpdatedAt time.Time
 	UpdatedBy string
