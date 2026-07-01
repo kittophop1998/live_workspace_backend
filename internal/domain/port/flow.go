@@ -17,6 +17,7 @@ type FlowRepository interface {
 	CreateFlow(context.Context, *entity.FlowDefinition) error
 	ListFlows(ctx context.Context, workspaceID string) ([]entity.FlowDefinition, error)
 	GetFlow(ctx context.Context, id string) (*entity.FlowDefinition, error)
+	DeleteFlow(ctx context.Context, workspaceID, id string) (bool, error)
 	SaveRun(context.Context, *entity.FlowRun) error
 	ListRuns(ctx context.Context, flowID string) ([]entity.FlowRun, error)
 	GetRun(ctx context.Context, runID string) (*entity.FlowRun, error)

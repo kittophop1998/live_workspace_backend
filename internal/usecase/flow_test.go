@@ -41,6 +41,19 @@ func (r *fakeFlowRepo) GetFlow(_ context.Context, id string) (*entity.FlowDefini
 	}
 	return nil, port.ErrFlowNotFound
 }
+func (r *fakeFlowRepo) DeleteFlow(_ context.Context, workspaceID, id string) (bool, error) {
+	flow, ok := r.flows[id]
+	if !ok || flow.WorkspaceID != workspaceID {
+		return false, nil
+	}
+	delete(r.flows, id)
+	for runID, run := range r.runs {
+		if run.FlowID == id && run.WorkspaceID == workspaceID {
+			delete(r.runs, runID)
+		}
+	}
+	return true, nil
+}
 func (r *fakeFlowRepo) SaveRun(_ context.Context, run *entity.FlowRun) error {
 	r.runs[run.ID] = run
 	return nil
@@ -198,5 +211,26 @@ func TestUnsupportedCriterionFails(t *testing.T) {
 	)
 	if passed || len(failures) != 1 {
 		t.Fatalf("passed=%v failures=%v", passed, failures)
+	}
+}
+
+func TestDeleteFlowCascadesRunsAndScopesWorkspace(t *testing.T) {
+	repo := newFakeFlowRepo()
+	repo.flows["flw_1"] = &entity.FlowDefinition{ID: "flw_1", WorkspaceID: "ws1"}
+	repo.runs["run_1"] = &entity.FlowRun{ID: "run_1", FlowID: "flw_1", WorkspaceID: "ws1"}
+	service := NewFlowService(repo, nil, arazzo.Parser{}, httpexec.New(true))
+
+	if err := service.Delete(context.Background(), "ws2", "flw_1"); err == nil {
+		t.Fatal("another workspace must not delete the flow")
+	}
+	if repo.flows["flw_1"] == nil || repo.runs["run_1"] == nil {
+		t.Fatal("cross-workspace delete changed persisted data")
+	}
+
+	if err := service.Delete(context.Background(), "ws1", "flw_1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if repo.flows["flw_1"] != nil || repo.runs["run_1"] != nil {
+		t.Fatal("flow or run history was not deleted")
 	}
 }

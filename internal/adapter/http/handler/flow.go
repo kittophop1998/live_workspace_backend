@@ -102,6 +102,15 @@ func (h *Handler) GetFlow(c *gin.Context) {
 	success(c, http.StatusOK, flowDTO(flow))
 }
 
+func (h *Handler) DeleteFlow(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.flowService.Delete(c.Request.Context(), middleware.WorkspaceID(c), id); err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, http.StatusOK, gin.H{"flow_id": id})
+}
+
 type runFlowRequest struct {
 	BaseURL string         `json:"base_url" binding:"required"`
 	Inputs  map[string]any `json:"inputs"`

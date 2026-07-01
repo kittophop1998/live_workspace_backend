@@ -139,6 +139,17 @@ func (r *FlowRepository) GetFlow(ctx context.Context, id string) (*entity.FlowDe
 	return toFlowEntity(&doc), nil
 }
 
+func (r *FlowRepository) DeleteFlow(ctx context.Context, workspaceID, id string) (bool, error) {
+	result, err := r.flows.DeleteOne(ctx, bson.M{"_id": id, "workspace_id": workspaceID})
+	if err != nil {
+		return false, fmt.Errorf("delete flow: %w", err)
+	}
+	if _, err := r.runs.DeleteMany(ctx, bson.M{"flow_id": id, "workspace_id": workspaceID}); err != nil {
+		return result.DeletedCount > 0, fmt.Errorf("delete flow runs: %w", err)
+	}
+	return result.DeletedCount > 0, nil
+}
+
 func (r *FlowRepository) SaveRun(ctx context.Context, run *entity.FlowRun) error {
 	if _, err := r.runs.InsertOne(ctx, toRunDoc(run)); err != nil {
 		return fmt.Errorf("insert flow run: %w", err)

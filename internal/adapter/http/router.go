@@ -45,6 +45,7 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.GET("/flows", h.ListFlows)
 		v1.GET("/flows/runs/:run_id", h.GetFlowRun)
 		v1.GET("/flows/:id", h.GetFlow)
+		v1.DELETE("/flows/:id", h.DeleteFlow)
 		v1.POST("/flows/:id/run", h.RunFlow)
 		v1.GET("/flows/:id/runs", h.ListFlowRuns)
 

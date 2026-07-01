@@ -177,6 +177,26 @@ client-side as a set of `resource.id`s in `localStorage`
 > `Collaborator.bookmarks: string[]` or a `GET/PUT /me/bookmarks` endpoint); the
 > local store then becomes a cache/fallback.
 
+### EndpointStatus (frontend-local)
+A per-endpoint **workflow/progress** status shown as a dropdown pill in the endpoint
+header. It is **distinct from `Resource.state`** (the server-derived field rollup
+`draft | ready | breaking`): this tracks how far the endpoint is in the build
+pipeline. The backend `Resource` model has **no slot for it yet**, so — like
+bookmarks and response schemas — it lives entirely client-side in `localStorage`
+(`live-workspace:endpoint-status`, keyed by `resource.id`) — see
+`src/lib/endpointStatus.ts`. Only meaningful for `kind:"endpoint"`; defaults to
+`draft`.
+```
+draft        // not started / spec only
+inprogress   // being implemented
+testing       // implemented, under test (incl. E2E flows)
+done         // shipped / verified
+```
+> **When the backend adopts this:** add a `status` field to `Resource` (endpoints
+> only; snake_case on the wire) settable via `PATCH /resources/{id}`, normalize it
+> in `src/services/workspace.service.ts`, and the local store becomes a
+> cache/fallback.
+
 ### Comment
 Inline discussion, optionally anchored to a single field.
 ```json
@@ -357,12 +377,15 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | POST | `/flows` | Save a parsed `FlowDefinition` (scoped to the room) |
 | GET | `/flows` | List saved flows for the room |
 | GET | `/flows/{id}` | One flow definition |
+| DELETE | `/flows/{id}` | Delete a saved flow and its run history |
 | POST | `/flows/{id}/run` | Run the flow for real: `{ "base_url": "...", "inputs": { } }` → `FlowRun` |
 | GET | `/flows/{id}/runs` | Run history (newest first, capped at 50) |
 | GET | `/flows/runs/{run_id}` | One `FlowRun` result |
 
 > Flows live in dedicated `flows` / `flow_runs` collections and do **not** bump the
-> workspace `rev` or emit WebSocket/activity events.
+> workspace `rev` or emit WebSocket/activity events. `DELETE /flows/{id}` hard-deletes
+> the definition **and cascades** to its `flow_runs`; response `data`:
+> `{ "flow_id": "flw_1a2b" }`.
 
 ---
 
@@ -506,6 +529,7 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 | Left explorer groups | `Resource.kind` (`endpoint` / `database` / `model`) |
 | Endpoint method tag + path | `Resource.method`, `Resource.path` |
 | Resource state dot / badge | `Resource.state` (server rollup) |
+| Endpoint status pill (Draft / In Progress / Testing / Done) | `EndpointStatus` (frontend-local, see §2) |
 | Blueprint field row | `SchemaField` (`key`, `type`, `required`, `description`) |
 | `[Draft] [Ready] [Breaking Change]` badge | `SchemaField.state` |
 | Diff line-weight / colour | `SchemaField.change` |

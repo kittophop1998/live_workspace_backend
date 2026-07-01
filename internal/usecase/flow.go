@@ -82,6 +82,18 @@ func (s *FlowService) Get(ctx context.Context, workspaceID, id string) (*entity.
 	return flow, nil
 }
 
+// Delete hard-deletes a room-scoped flow and its persisted run history.
+func (s *FlowService) Delete(ctx context.Context, workspaceID, id string) error {
+	deleted, err := s.repo.DeleteFlow(ctx, workspaceID, id)
+	if err != nil {
+		return fmt.Errorf("delete flow: %w", err)
+	}
+	if !deleted {
+		return notFound("flow", id)
+	}
+	return nil
+}
+
 func (s *FlowService) ListRuns(ctx context.Context, workspaceID, flowID string) ([]entity.FlowRun, error) {
 	if _, err := s.Get(ctx, workspaceID, flowID); err != nil {
 		return nil, err
