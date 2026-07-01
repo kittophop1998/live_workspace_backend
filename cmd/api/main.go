@@ -18,7 +18,9 @@ import (
 	"kingdom_manager/backend/internal/adapter/http/middleware"
 	"kingdom_manager/backend/internal/adapter/http/realtime"
 	mongorepo "kingdom_manager/backend/internal/adapter/repository/mongo"
+	"kingdom_manager/backend/internal/arazzo"
 	"kingdom_manager/backend/internal/config"
+	"kingdom_manager/backend/internal/httpexec"
 	"kingdom_manager/backend/internal/usecase"
 )
 
@@ -58,12 +60,19 @@ func run() error {
 	if err := repository.EnsureIndexes(connectCtx); err != nil {
 		return err
 	}
+	flowRepository := mongorepo.NewFlowRepository(client.Database(cfg.MongoDatabase))
+	if err := flowRepository.EnsureIndexes(connectCtx); err != nil {
+		return err
+	}
 	hub := realtime.NewHub(cfg.AllowedOrigins)
 	service := usecase.NewService(repository, cfg.WorkspaceID, hub)
 	roomService := usecase.NewRoomService(repository)
+	// Dev tool: allow proxying to private/localhost hosts so devs can test local APIs.
+	executor := httpexec.New(true)
+	flowService := usecase.NewFlowService(flowRepository, service, arazzo.Parser{}, executor)
 	hub.SetService(service)
 	auth := middleware.NewAuth(cfg.JWTSecret, 30*24*time.Hour)
-	apiHandler := handler.New(service, roomService, auth)
+	apiHandler := handler.New(service, roomService, flowService, executor, auth)
 	router := httpadapter.NewRouter(apiHandler, auth, hub, cfg.AllowedOrigins)
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: router, ReadHeaderTimeout: 5 * time.Second}
 

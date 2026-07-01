@@ -148,6 +148,35 @@ A unit in the explorer: an API endpoint, a database table, or a schema model.
 > display it; they do not author it directly. `updated_at` / `updated_by` are set
 > by the server on every mutation.
 
+### ResponseSchema (frontend-local)
+The per-status response shapes shown **below the request body** of the API Endpoint
+view as a **status tab strip** (`200` / `400` / `500` …) — each tab opens the same
+Visual / JSON Schema / Example JSON / Example TypeScript editor as the request body.
+The backend `Resource` model has **no slot for these yet**, so the frontend keeps
+them client-side, persisted in `localStorage`
+(`live-workspace:response-schemas`, keyed by `resource.id`) — see
+`src/lib/responseSchemas.ts`. They are populated manually or by the **spec import**
+flow (`src/lib/specImport.ts`, OpenAPI YAML/JSON or Postman collection).
+```json
+{
+  "status": 200,                 // HTTP status; 0 = OpenAPI "default"
+  "description": "OK",           // optional short label
+  "fields": [ "...SchemaField" ] // same SchemaField shape as the request blueprint
+}
+```
+> **When the backend adopts these:** add a `responses: ResponseSchema[]` array to
+> `Resource` (snake_case on the wire), normalize it in
+> `src/services/workspace.service.ts`, and the local store becomes a cache/fallback.
+
+### Bookmark (frontend-local)
+The explorer pins bookmarked resources in a **"Bookmarked" group at the top**.
+Bookmarks are a per-user preference with **no backend slot**, so they live entirely
+client-side as a set of `resource.id`s in `localStorage`
+(`live-workspace:bookmarks`) — see `src/lib/bookmarks.ts`.
+> **When the backend adopts these:** store per-collaborator (e.g.
+> `Collaborator.bookmarks: string[]` or a `GET/PUT /me/bookmarks` endpoint); the
+> local store then becomes a cache/fallback.
+
 ### Comment
 Inline discussion, optionally anchored to a single field.
 ```json
@@ -198,6 +227,71 @@ plus the roster).
   "ts": 1782547200000           // epoch ms of last heartbeat; online if within TTL (~8s)
 }
 ```
+
+### API test request/result (not persisted)
+Backing shape for the in-endpoint **"Try it"** helper. The request is proxied
+**server-side** (`POST /http/test`) so the browser isn't blocked by CORS and
+latency is measured on the server. Nothing is persisted; the draft lives
+client-side in `localStorage` (`live-workspace:api-tests`, keyed by `resource.id`)
+— see `src/lib/apiTester.ts`.
+```json
+// request
+{ "method": "POST", "url": "http://localhost:8080/api/v1/users?limit=5",
+  "headers": { "Content-Type": "application/json" }, "body": "{\"name\":\"Ada\"}" }
+// result
+{ "status": 201, "duration_ms": 42, "headers": { "Content-Type": ["application/json"] },
+  "body": "{...}", "size": 128, "truncated": false, "error": "" }
+```
+On a transport failure (DNS/refused/timeout) the endpoint still returns `200` with
+`status: 0` and a non-empty `error` so the UI can render it inline.
+
+### FlowDefinition (E2E Flow Testing — persisted)
+A workflow parsed from an uploaded **Arazzo (OpenAPI Workflows) JSON/YAML** file.
+Stored in its **own Mongo collection** (`flows`), scoped by `workspace_id` — *not*
+embedded in the rev-guarded workspace document, so runs never conflict with schema
+edits. A step resolves its HTTP call from an explicit `method`+`path`, or from its
+`operation_id` matched (case-insensitive, by name) against the workspace's endpoint
+resources — the integration point that ties flows to the shared API spec.
+```json
+{
+  "id": "flw_1a2b", "workspace_id": "123456",
+  "name": "loginAndFetch", "description": "Log in then fetch the profile",
+  "inputs": [ { "name": "username", "in": "input", "value": "alice" } ],
+  "steps": [
+    {
+      "id": "fst_9f", "step_id": "login", "description": "…",
+      "operation_id": "loginUser", "method": "POST", "path": "/login", "order": 0,
+      "depends_on": [],                              // inferred from $steps.<id> refs or explicit
+      "parameters": [ { "name": "q", "in": "query", "value": "$inputs.username" } ],
+      "request_body": { "password": "$inputs.password" },
+      "outputs": [ { "name": "token", "from": "$response.body#/token" } ],
+      "success_criteria": [ { "condition": "$statusCode == 200", "context": "", "type": "" } ]
+    }
+  ],
+  "created_at": "2026-07-01T08:00:00Z", "created_by": "Ava Chen"
+}
+```
+
+### FlowRun (E2E Flow Testing — persisted)
+The result of executing a `FlowDefinition` for real against a `base_url`. Stored in
+the `flow_runs` collection. Steps run in dependency order; outputs chain into later
+steps; the first failing/erroring step stops the run and the rest are `skipped`.
+```json
+{
+  "id": "run_77", "flow_id": "flw_1a2b", "workspace_id": "123456",
+  "status": "passed",                     // passed | failed | errored
+  "base_url": "http://localhost:8080", "started_at": "…", "finished_at": "…",
+  "steps": [
+    { "step_id": "login", "method": "POST", "url": "http://localhost:8080/login",
+      "status": 200, "duration_ms": 42, "passed": true, "skipped": false,
+      "failures": [], "outputs": { "token": "abc" }, "request_body": "{…}", "response": "{…}" }
+  ]
+}
+```
+Supported runtime expressions: `$statusCode`, `$response.body`,
+`$response.body#/json/pointer`, `$response.header.Name`, `$inputs.name`,
+`$steps.<stepId>.outputs.<name>`. Success criteria support `==/!=/>/>=/</<=`
+comparisons and `type: "regex"`; no criteria ⇒ a 2xx status passes.
 
 ---
 
@@ -250,6 +344,25 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | method | path | purpose |
 |--------|------|---------|
 | GET | `/activity` | Activity feed, newest first (`?limit=50&resource_id=` optional) |
+
+### API testing (proxy)
+| method | path | purpose |
+|--------|------|---------|
+| POST | `/http/test` | Proxy one outbound request; returns status/time/headers/body (see model) |
+
+### E2E Flow Testing
+| method | path | purpose |
+|--------|------|---------|
+| POST | `/flows/parse` | Parse an uploaded Arazzo file (multipart `file` or raw body) → preview `{ flows: FlowDefinition[] }`, **not** persisted |
+| POST | `/flows` | Save a parsed `FlowDefinition` (scoped to the room) |
+| GET | `/flows` | List saved flows for the room |
+| GET | `/flows/{id}` | One flow definition |
+| POST | `/flows/{id}/run` | Run the flow for real: `{ "base_url": "...", "inputs": { } }` → `FlowRun` |
+| GET | `/flows/{id}/runs` | Run history (newest first, capped at 50) |
+| GET | `/flows/runs/{run_id}` | One `FlowRun` result |
+
+> Flows live in dedicated `flows` / `flow_runs` collections and do **not** bump the
+> workspace `rev` or emit WebSocket/activity events.
 
 ---
 
@@ -398,10 +511,13 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 | Diff line-weight / colour | `SchemaField.change` |
 | Field comment count | `Comment[]` where `resource_id` + `field_id` match |
 | "updated 2m ago by X" | `Resource.updated_at`, `updated_by` |
+| Request body tabs (Visual / JSON Schema / Example JSON / Example TypeScript) | `Resource.fields` → client-side schema tree (`schemaConvert.ts`) — **no API** |
+| Response tabs (per HTTP status) | `ResponseSchema[]` (frontend-local, see §2) |
+| Explorer "Bookmarked" group (pinned top) | client-side bookmark set (frontend-local, see §2) |
 | Right · Activity tab | `ActivityEvent[]` (newest first) |
 | Right · Comments tab | `Comment[]` (filtered by selected resource / focused field) |
-| Right · Export tab | computed client-side from `Resource.fields` (`codegen.ts`) — **no API** |
 | Top bar presence avatars | `Collaborator[]` + live `Presence` (online if heartbeat within TTL) |
+| Top bar "Import API" | parses an OpenAPI/Postman spec and **`POST /resources`** one endpoint per chosen operation |
 
 The client treats each read/WS payload as the **single source of truth**, merges
 mutations by `rev` (last-writer-wins on conflict, with `409` rebase), and never

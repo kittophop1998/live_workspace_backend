@@ -37,6 +37,17 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.POST("/resources/:id/comments", h.AddComment)
 		v1.DELETE("/comments/:id", h.DeleteComment)
 		v1.GET("/activity", h.Activity)
+
+		// API testing (single-request proxy) + E2E flow testing.
+		v1.POST("/http/test", h.HTTPTest)
+		v1.POST("/flows/parse", h.ParseFlow)
+		v1.POST("/flows", h.SaveFlow)
+		v1.GET("/flows", h.ListFlows)
+		v1.GET("/flows/runs/:run_id", h.GetFlowRun)
+		v1.GET("/flows/:id", h.GetFlow)
+		v1.POST("/flows/:id/run", h.RunFlow)
+		v1.GET("/flows/:id/runs", h.ListFlowRuns)
+
 		v1.GET("/stream", hub.Serve)
 	}
 	return router

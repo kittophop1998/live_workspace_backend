@@ -9,17 +9,20 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kingdom_manager/backend/internal/adapter/http/middleware"
+	"kingdom_manager/backend/internal/httpexec"
 	"kingdom_manager/backend/internal/usecase"
 )
 
 type Handler struct {
 	service     *usecase.Service
 	roomService *usecase.RoomService
+	flowService *usecase.FlowService
+	executor    *httpexec.Executor
 	auth        *middleware.Auth
 }
 
-func New(service *usecase.Service, roomService *usecase.RoomService, auth *middleware.Auth) *Handler {
-	return &Handler{service: service, roomService: roomService, auth: auth}
+func New(service *usecase.Service, roomService *usecase.RoomService, flowService *usecase.FlowService, executor *httpexec.Executor, auth *middleware.Auth) *Handler {
+	return &Handler{service: service, roomService: roomService, flowService: flowService, executor: executor, auth: auth}
 }
 
 func (h *Handler) serviceFor(c *gin.Context) *usecase.Service {
