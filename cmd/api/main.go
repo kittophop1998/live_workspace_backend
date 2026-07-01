@@ -17,6 +17,7 @@ import (
 	"kingdom_manager/backend/internal/adapter/http/handler"
 	"kingdom_manager/backend/internal/adapter/http/middleware"
 	"kingdom_manager/backend/internal/adapter/http/realtime"
+	mcpadapter "kingdom_manager/backend/internal/adapter/mcp"
 	mongorepo "kingdom_manager/backend/internal/adapter/repository/mongo"
 	"kingdom_manager/backend/internal/arazzo"
 	"kingdom_manager/backend/internal/config"
@@ -74,6 +75,11 @@ func run() error {
 	auth := middleware.NewAuth(cfg.JWTSecret, 30*24*time.Hour)
 	apiHandler := handler.New(service, roomService, flowService, executor, auth)
 	router := httpadapter.NewRouter(apiHandler, auth, hub, cfg.AllowedOrigins)
+	mcpServer := mcpadapter.NewServer(service, flowService, slog.Default())
+	mcpadapter.Mount(router, cfg.MCPEnabled, cfg.MCPPath, auth, mcpServer)
+	if cfg.MCPEnabled {
+		slog.Info("MCP enabled", "path", cfg.MCPPath)
+	}
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: router, ReadHeaderTimeout: 5 * time.Second}
 
 	go hub.Run(rootCtx)
