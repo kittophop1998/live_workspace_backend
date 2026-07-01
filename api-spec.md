@@ -225,7 +225,7 @@ Append-only audit feed. Emitted by the server on every mutation.
 {
   "id": "act_551",
   "actor": "Ava Chen",
-  "verb": "added",              // added|edited|removed|renamed|set draft|set ready|set breaking|flagged|created|commented on
+  "verb": "added",              // added|edited|removed|cleared|renamed|set draft|set ready|set breaking|flagged|created|commented on
   "target": "avatarUrl",       // field key, "old → new", or resource name
   "resource_id": "res_user",
   "at": "2026-06-30T07:55:00Z"
@@ -351,6 +351,7 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | GET | `/resources` | List resources (`?kind=endpoint\|database\|model` and/or `?status=draft\|inprogress\|testing\|done` optional; `status` applies to endpoints only) |
 | GET | `/resources/{id}` | One resource (with fields) |
 | POST | `/resources` | Create a resource |
+| DELETE | `/resources` | **Delete ALL resources in the room** (clears the workspace; backs the "Import API" wipe-then-recreate flow) |
 | PATCH | `/resources/{id}` | Rename / set `method` / `path` |
 | DELETE | `/resources/{id}` | Delete a resource |
 
@@ -416,6 +417,7 @@ All payloads reuse the §2 models. Clients merge by `rev` (ignore `rev <= local`
 |------|---------|
 | `snapshot` | `WorkspaceSnapshot` (sent on connect) |
 | `resource.created` / `resource.updated` / `resource.deleted` | `{ "rev", "resource": Resource }` (deleted → `{ "rev", "resource_id" }`) |
+| `resource.cleared` | `{ "rev", "resource_ids": [ "res_…" ] }` (bulk delete-all; clients drop every listed id + its comments) |
 | `field.created` / `field.updated` / `field.removed` | `{ "rev", "resource": Resource }` (send the whole updated resource so `state` rollup + fields stay consistent) |
 | `comment.created` / `comment.deleted` | `{ "rev", "comment": Comment }` / `{ "rev", "comment_id" }` |
 | `activity.created` | `{ "activity": ActivityEvent }` |
@@ -484,6 +486,15 @@ soft-delete rule). Emits a `resource.deleted` over WebSocket (§4) and an
 
 Response `data`: `{ "rev": 45, "resource_id": "res_create_order" }`
 
+### DELETE `/resources`
+Wipes **every** resource in the room (and their comments) in one rev-bumping
+mutation — the "clear the workspace" primitive behind the **Import API**
+wipe-then-recreate flow. A no-op on an empty workspace returns the current `rev`
+without bumping or broadcasting. Emits `resource.cleared` (§4) and one
+`ActivityEvent` (`verb:"cleared"`, `target:"all resources"`).
+
+Response `data`: `{ "rev": 46, "resource_ids": [ "res_user", "res_create_order" ] }`
+
 ### POST `/resources/{id}/fields`
 Request:
 ```json
@@ -550,7 +561,7 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 | Right · Activity tab | `ActivityEvent[]` (newest first) |
 | Right · Comments tab | `Comment[]` (filtered by selected resource / focused field) |
 | Top bar presence avatars | `Collaborator[]` + live `Presence` (online if heartbeat within TTL) |
-| Top bar "Import API" | parses an OpenAPI/Postman spec and **`POST /resources`** one endpoint per chosen operation |
+| Top bar "Import API" | **`DELETE /resources`** (wipe the workspace) then parses an OpenAPI/Postman spec and **`POST /resources`** one endpoint per chosen operation |
 
 The client treats each read/WS payload as the **single source of truth**, merges
 mutations by `rev` (last-writer-wins on conflict, with `409` rebase), and never

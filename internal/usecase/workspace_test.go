@@ -14,6 +14,7 @@ import (
 type fakeRepository struct {
 	workspace *entity.Workspace
 	conflict  bool
+	saveCount int
 }
 
 func (f *fakeRepository) Get(context.Context, string) (*entity.Workspace, error) {
@@ -32,8 +33,17 @@ func (f *fakeRepository) Save(_ context.Context, ws *entity.Workspace, expected 
 	if f.conflict || f.workspace.Rev != expected {
 		return port.ErrRevisionConflict
 	}
+	f.saveCount++
 	f.workspace = ws
 	return nil
+}
+
+type recordingPublisher struct {
+	events []Event
+}
+
+func (p *recordingPublisher) Publish(event Event) {
+	p.events = append(p.events, event)
 }
 
 func newTestService(fields ...entity.SchemaField) (*Service, *fakeRepository) {
@@ -222,5 +232,61 @@ func TestResourcesRejectsInvalidStatus(t *testing.T) {
 
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
+func TestDeleteAllResourcesClearsResourcesAndComments(t *testing.T) {
+	service, repository := newTestService()
+	repository.workspace.Resources = append(repository.workspace.Resources,
+		entity.Resource{ID: "res_second", Name: "Order", Kind: entity.KindModel},
+	)
+	repository.workspace.Comments = []entity.Comment{
+		{ID: "cmt_first", ResourceID: "res_test"},
+		{ID: "cmt_second", ResourceID: "res_second"},
+	}
+	publisher := &recordingPublisher{}
+	service.publisher = publisher
+
+	result, err := service.DeleteAllResources(context.Background(), "col_test", nil)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rev != 4 || !reflect.DeepEqual(result.ResourceIDs, []string{"res_test", "res_second"}) {
+		t.Fatalf("unexpected clear result: %+v", result)
+	}
+	if len(repository.workspace.Resources) != 0 || len(repository.workspace.Comments) != 0 {
+		t.Fatalf("workspace was not cleared: resources=%d comments=%d", len(repository.workspace.Resources), len(repository.workspace.Comments))
+	}
+	if repository.saveCount != 1 {
+		t.Fatalf("expected one save, got %d", repository.saveCount)
+	}
+	if len(repository.workspace.Activity) != 1 || repository.workspace.Activity[0].Verb != "cleared" || repository.workspace.Activity[0].Target != "all resources" {
+		t.Fatalf("unexpected activity: %+v", repository.workspace.Activity)
+	}
+	if len(publisher.events) != 2 || publisher.events[0].Type != "resource.cleared" || publisher.events[1].Type != "activity.created" {
+		t.Fatalf("unexpected published events: %+v", publisher.events)
+	}
+}
+
+func TestDeleteAllResourcesEmptyWorkspaceIsNoOp(t *testing.T) {
+	service, repository := newTestService()
+	repository.workspace.Resources = []entity.Resource{}
+	publisher := &recordingPublisher{}
+	service.publisher = publisher
+
+	result, err := service.DeleteAllResources(context.Background(), "col_test", nil)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rev != 3 || len(result.ResourceIDs) != 0 {
+		t.Fatalf("unexpected no-op result: %+v", result)
+	}
+	if repository.saveCount != 0 {
+		t.Fatalf("empty clear saved workspace %d times", repository.saveCount)
+	}
+	if len(publisher.events) != 0 {
+		t.Fatalf("empty clear published events: %+v", publisher.events)
 	}
 }
