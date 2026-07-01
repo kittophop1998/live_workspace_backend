@@ -209,6 +209,8 @@ func presenceKey(workspaceID, clientID string) string { return workspaceID + ":"
 
 func eventPayload(event usecase.Event) any {
 	switch value := event.Payload.(type) {
+	case *usecase.ClearResult:
+		return map[string]any{"rev": value.Rev, "resource_ids": value.ResourceIDs}
 	case *usecase.MutationResult:
 		if event.Type == "resource.deleted" && value.Resource != nil {
 			return map[string]any{"rev": value.Rev, "resource_id": value.Resource.ID}

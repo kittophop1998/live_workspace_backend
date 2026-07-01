@@ -118,6 +118,15 @@ func (h *Handler) UpdateResource(c *gin.Context) {
 	h.writeMutation(c, result, err, http.StatusOK)
 }
 
+func (h *Handler) DeleteAllResources(c *gin.Context) {
+	result, err := h.serviceFor(c).DeleteAllResources(c.Request.Context(), middleware.CollaboratorID(c), revision(c))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	success(c, http.StatusOK, gin.H{"rev": result.Rev, "resource_ids": result.ResourceIDs})
+}
+
 func (h *Handler) DeleteResource(c *gin.Context) {
 	result, err := h.serviceFor(c).DeleteResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
 	if err != nil {

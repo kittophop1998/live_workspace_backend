@@ -214,6 +214,58 @@ func (s *Service) DeleteResource(ctx context.Context, actorID, id string, expect
 	})
 }
 
+// ClearResult reports a bulk "delete all resources" mutation.
+type ClearResult struct {
+	Rev         int64
+	ResourceIDs []string
+}
+
+// DeleteAllResources removes every resource (and its comments) in the room in a
+// single rev-bumping mutation. Used by the "Import API" flow, which wipes the
+// workspace before recreating endpoints from a spec. A no-op on an empty
+// workspace (returns the current rev without bumping or broadcasting).
+func (s *Service) DeleteAllResources(ctx context.Context, actorID string, expected *int64) (*ClearResult, error) {
+	ws, err := s.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if expected != nil && *expected != ws.Rev {
+		return nil, &Error{Kind: ErrRevConflict, Message: "workspace revision is stale", Details: map[string]any{"current_rev": ws.Rev}}
+	}
+	actor, ok := collaborator(ws, actorID)
+	if !ok {
+		return nil, notFound("collaborator", actorID)
+	}
+	ids := make([]string, 0, len(ws.Resources))
+	for _, resource := range ws.Resources {
+		ids = append(ids, resource.ID)
+	}
+	if len(ids) == 0 {
+		return &ClearResult{Rev: ws.Rev, ResourceIDs: ids}, nil
+	}
+	oldRev := ws.Rev
+	ws.Resources = []entity.Resource{}
+	ws.Comments = []entity.Comment{}
+	event := activity(actor, "cleared", "all resources", "", s.now())
+	ws.Rev++
+	ws.Activity = append(ws.Activity, event)
+	if len(ws.Activity) > 1000 {
+		ws.Activity = ws.Activity[len(ws.Activity)-1000:]
+	}
+	if err := s.repo.Save(ctx, ws, oldRev); err != nil {
+		if errors.Is(err, port.ErrRevisionConflict) {
+			return nil, &Error{Kind: ErrRevConflict, Message: "workspace was changed by another client"}
+		}
+		return nil, fmt.Errorf("save workspace: %w", err)
+	}
+	result := &ClearResult{Rev: ws.Rev, ResourceIDs: ids}
+	if s.publisher != nil {
+		s.publisher.Publish(Event{Type: "resource.cleared", Payload: result, WorkspaceID: s.workspaceID})
+		s.publisher.Publish(Event{Type: "activity.created", Payload: event, WorkspaceID: s.workspaceID})
+	}
+	return result, nil
+}
+
 func (s *Service) AddField(ctx context.Context, actorID, resourceID string, expected *int64, in FieldInput) (*MutationResult, error) {
 	if err := validateField(in.Key, in.Type, in.State); err != nil {
 		return nil, err

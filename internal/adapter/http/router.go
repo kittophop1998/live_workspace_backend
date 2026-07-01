@@ -28,6 +28,7 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.GET("/resources", h.ListResources)
 		v1.GET("/resources/:id", h.GetResource)
 		v1.POST("/resources", h.CreateResource)
+		v1.DELETE("/resources", h.DeleteAllResources)
 		v1.PATCH("/resources/:id", h.UpdateResource)
 		v1.DELETE("/resources/:id", h.DeleteResource)
 		v1.POST("/resources/:id/fields", h.AddField)
