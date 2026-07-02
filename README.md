@@ -6,12 +6,24 @@ Go/Gin API backed by MongoDB for the collaboration contract in `api-spec.md`.
 
 ```bash
 cp .env.example .env
-docker compose up -d mongo
 set -a; source .env; set +a
 go run ./cmd/api
 ```
 
 The API is available at `http://localhost:8080/api/v1`.
+
+## Run backend in Docker with external MongoDB
+
+```bash
+cp .env.compose.example .env
+# Edit MONGO_URI in .env to point to the external MongoDB instance.
+docker compose up -d --build
+```
+
+The API is available at `http://localhost:8081/api/v1` by default. Change
+`API_PORT` to expose a different host port. For MongoDB running on the Docker
+host, use `mongodb://host.docker.internal:27017`; for a remote deployment, use
+its normal `mongodb://` or `mongodb+srv://` connection string.
 
 ## MCP
 

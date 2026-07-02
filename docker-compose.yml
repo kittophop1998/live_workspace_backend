@@ -2,30 +2,18 @@ services:
   api:
     build:
       context: .
+    restart: unless-stopped
     environment:
       HTTP_ADDR: ":8080"
-      MONGO_URI: mongodb://mongo:27017
-      MONGO_DATABASE: fark_noi
-      WORKSPACE_ID: wsp_demo
-      DEV_COLLABORATOR_ID: col_demo
-      CORS_ORIGINS: http://localhost:3000
+      MONGO_URI: "${MONGO_URI:?MONGO_URI must point to an external MongoDB instance}"
+      MONGO_DATABASE: "${MONGO_DATABASE:-fark_noi}"
+      WORKSPACE_ID: "${WORKSPACE_ID:-wsp_demo}"
+      JWT_SECRET: "${JWT_SECRET:-local-development-secret-change-me}"
+      DEV_COLLABORATOR_ID: "${DEV_COLLABORATOR_ID:-col_demo}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000}"
+      MCP_ENABLED: "${MCP_ENABLED:-false}"
+      MCP_PATH: "${MCP_PATH:-/mcp}"
     ports:
-      - "8080:8080"
-    depends_on:
-      mongo:
-        condition: service_healthy
-
-  mongo:
-    image: mongo:7
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-volumes:
-  mongo_data:
+      - "${API_PORT:-8081}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
