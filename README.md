@@ -13,6 +13,12 @@ go run ./cmd/api
 
 The API is available at `http://localhost:8080/api/v1`.
 
+## MCP
+
+Backend มี HTTP MCP endpoint แบบ authenticated และ read-only ซึ่งปิดไว้เป็น
+ค่าเริ่มต้น ดูวิธีเปิดใช้งาน ขอ token ตั้งค่า client และเรียก tools ได้ที่
+[คู่มือใช้งาน MCP](docs/mcp.md)
+
 Create a permanent room and receive its full session plus an access token:
 
 ```bash
