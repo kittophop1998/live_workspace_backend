@@ -39,4 +39,27 @@ func TestToEntityDefaultsLegacyEndpointStatusToDraft(t *testing.T) {
 	if workspace.Resources[1].Status != nil {
 		t.Fatalf("expected model status to be nil, got %v", workspace.Resources[1].Status)
 	}
+	if workspace.Resources[0].Responses == nil {
+		t.Fatal("expected legacy endpoint responses to default to an empty array")
+	}
+}
+
+func TestResponseSchemasRoundTrip(t *testing.T) {
+	description := "OK"
+	workspace := &entity.Workspace{ID: "wsp_test", Resources: []entity.Resource{{
+		ID: "res_endpoint", Kind: entity.KindEndpoint,
+		Responses: []entity.ResponseSchema{{
+			Status: 200, Description: &description,
+			Fields: []entity.SchemaField{{
+				ID: "fld_body", Key: "body", Type: "json", State: entity.StateReady,
+				Change: entity.ChangeAdded, Value: map[string]any{"active": true},
+			}},
+		}},
+	}}}
+
+	got := toEntity(toDocument(workspace)).Resources[0].Responses
+
+	if !reflect.DeepEqual(got, workspace.Resources[0].Responses) {
+		t.Fatalf("response schemas did not round trip: %#v", got)
+	}
 }

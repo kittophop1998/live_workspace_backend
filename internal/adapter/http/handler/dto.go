@@ -48,17 +48,23 @@ type fieldResponse struct {
 	Description *string `json:"description,omitempty"`
 	Value       any     `json:"value,omitempty"`
 }
+type responseSchemaResponse struct {
+	Status      int             `json:"status"`
+	Description *string         `json:"description,omitempty"`
+	Fields      []fieldResponse `json:"fields"`
+}
 type resourceResponse struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Kind      string          `json:"kind"`
-	Method    *string         `json:"method"`
-	Path      *string         `json:"path"`
-	State     string          `json:"state"`
-	Status    *string         `json:"status"`
-	Fields    []fieldResponse `json:"fields"`
-	UpdatedAt time.Time       `json:"updated_at"`
-	UpdatedBy string          `json:"updated_by"`
+	ID        string                    `json:"id"`
+	Name      string                    `json:"name"`
+	Kind      string                    `json:"kind"`
+	Method    *string                   `json:"method"`
+	Path      *string                   `json:"path"`
+	State     string                    `json:"state"`
+	Status    *string                   `json:"status"`
+	Fields    []fieldResponse           `json:"fields"`
+	Responses *[]responseSchemaResponse `json:"responses,omitempty"`
+	UpdatedAt time.Time                 `json:"updated_at"`
+	UpdatedBy string                    `json:"updated_by"`
 }
 type commentResponse struct {
 	ID         string    `json:"id"`
@@ -89,9 +95,23 @@ func resourceDTO(value entity.Resource) resourceResponse {
 	}
 	out := resourceResponse{ID: value.ID, Name: value.Name, Kind: string(value.Kind), Method: value.Method, Path: value.Path, State: string(value.State), Status: status, Fields: []fieldResponse{}, UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 	for _, field := range value.Fields {
-		out.Fields = append(out.Fields, fieldResponse{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description, Value: field.Value})
+		out.Fields = append(out.Fields, fieldDTO(field))
+	}
+	if value.Kind == entity.KindEndpoint {
+		responses := make([]responseSchemaResponse, len(value.Responses))
+		for i, response := range value.Responses {
+			fields := make([]fieldResponse, len(response.Fields))
+			for j, field := range response.Fields {
+				fields[j] = fieldDTO(field)
+			}
+			responses[i] = responseSchemaResponse{Status: response.Status, Description: response.Description, Fields: fields}
+		}
+		out.Responses = &responses
 	}
 	return out
+}
+func fieldDTO(field entity.SchemaField) fieldResponse {
+	return fieldResponse{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description, Value: field.Value}
 }
 func commentDTO(value entity.Comment) commentResponse {
 	return commentResponse{ID: value.ID, ResourceID: value.ResourceID, FieldID: value.FieldID, Author: value.Author, Role: string(value.Role), Body: value.Body, At: value.At}

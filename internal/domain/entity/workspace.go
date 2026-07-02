@@ -61,6 +61,12 @@ type SchemaField struct {
 	Value       any
 }
 
+type ResponseSchema struct {
+	Status      int
+	Description *string
+	Fields      []SchemaField
+}
+
 type Resource struct {
 	ID        string
 	Name      string
@@ -70,6 +76,7 @@ type Resource struct {
 	State     FieldState
 	Status    *EndpointStatus
 	Fields    []SchemaField
+	Responses []ResponseSchema
 	UpdatedAt time.Time
 	UpdatedBy string
 }

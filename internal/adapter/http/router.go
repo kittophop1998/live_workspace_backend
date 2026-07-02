@@ -14,7 +14,7 @@ import (
 func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, origins []string) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery(), cors.New(cors.Config{
-		AllowOrigins: origins, AllowMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowOrigins: origins, AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{"Authorization", "Content-Type", "If-Match"},
 	}))
 	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
@@ -31,6 +31,7 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.DELETE("/resources", h.DeleteAllResources)
 		v1.PATCH("/resources/:id", h.UpdateResource)
 		v1.DELETE("/resources/:id", h.DeleteResource)
+		v1.PUT("/resources/:id/responses", h.ReplaceResponses)
 		v1.POST("/resources/:id/fields", h.AddField)
 		v1.PATCH("/resources/:id/fields/:field_id", h.UpdateField)
 		v1.DELETE("/resources/:id/fields/:field_id", h.DeleteField)

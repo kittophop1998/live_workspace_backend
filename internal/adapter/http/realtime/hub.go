@@ -253,9 +253,24 @@ func snapshotPayload(ws *entity.Workspace) map[string]any {
 func resourcePayload(value entity.Resource) map[string]any {
 	fields := make([]any, 0, len(value.Fields))
 	for _, field := range value.Fields {
-		fields = append(fields, map[string]any{"id": field.ID, "key": field.Key, "type": field.Type, "required": field.Required, "state": field.State, "change": field.Change, "description": field.Description, "value": field.Value})
+		fields = append(fields, fieldPayload(field))
 	}
-	return map[string]any{"id": value.ID, "name": value.Name, "kind": value.Kind, "method": value.Method, "path": value.Path, "state": value.State, "status": value.Status, "fields": fields, "updated_at": value.UpdatedAt, "updated_by": value.UpdatedBy}
+	out := map[string]any{"id": value.ID, "name": value.Name, "kind": value.Kind, "method": value.Method, "path": value.Path, "state": value.State, "status": value.Status, "fields": fields, "updated_at": value.UpdatedAt, "updated_by": value.UpdatedBy}
+	if value.Kind == entity.KindEndpoint {
+		responses := make([]any, 0, len(value.Responses))
+		for _, response := range value.Responses {
+			responseFields := make([]any, 0, len(response.Fields))
+			for _, field := range response.Fields {
+				responseFields = append(responseFields, fieldPayload(field))
+			}
+			responses = append(responses, map[string]any{"status": response.Status, "description": response.Description, "fields": responseFields})
+		}
+		out["responses"] = responses
+	}
+	return out
+}
+func fieldPayload(field entity.SchemaField) map[string]any {
+	return map[string]any{"id": field.ID, "key": field.Key, "type": field.Type, "required": field.Required, "state": field.State, "change": field.Change, "description": field.Description, "value": field.Value}
 }
 func commentPayload(value entity.Comment) map[string]any {
 	return map[string]any{"id": value.ID, "resource_id": value.ResourceID, "field_id": value.FieldID, "author": value.Author, "role": value.Role, "body": value.Body, "at": value.At}

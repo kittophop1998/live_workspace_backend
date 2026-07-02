@@ -290,3 +290,70 @@ func TestDeleteAllResourcesEmptyWorkspaceIsNoOp(t *testing.T) {
 		t.Fatalf("empty clear published events: %+v", publisher.events)
 	}
 }
+
+func TestReplaceResponsesPersistsAndPublishesResourceUpdate(t *testing.T) {
+	service, repository := newTestService()
+	draft := entity.EndpointStatusDraft
+	repository.workspace.Resources[0].Kind = entity.KindEndpoint
+	repository.workspace.Resources[0].Status = &draft
+	publisher := &recordingPublisher{}
+	service.publisher = publisher
+	description := "OK"
+
+	result, err := service.ReplaceResponses(context.Background(), "col_test", "res_test", nil, []ResponseSchemaInput{{
+		Status: 200, Description: &description,
+		Fields: []ResponseFieldInput{{
+			ID: "fld_user_id", Key: "id", Type: "uuid", Required: true,
+			State: "ready", Change: "added",
+		}},
+	}})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rev != 4 || len(result.Resource.Responses) != 1 || result.Resource.Responses[0].Status != 200 {
+		t.Fatalf("unexpected mutation result: %+v", result)
+	}
+	if result.Resource.UpdatedBy != "Tester" {
+		t.Fatalf("updated_by = %q", result.Resource.UpdatedBy)
+	}
+	if len(repository.workspace.Activity) != 1 || repository.workspace.Activity[0].Target != "responses" {
+		t.Fatalf("unexpected activity: %+v", repository.workspace.Activity)
+	}
+	if len(publisher.events) != 2 || publisher.events[0].Type != "resource.updated" {
+		t.Fatalf("unexpected events: %+v", publisher.events)
+	}
+}
+
+func TestReplaceResponsesAllowsEmptyArray(t *testing.T) {
+	service, repository := newTestService()
+	repository.workspace.Resources[0].Kind = entity.KindEndpoint
+	repository.workspace.Resources[0].Responses = []entity.ResponseSchema{{Status: 200}}
+
+	result, err := service.ReplaceResponses(context.Background(), "col_test", "res_test", nil, []ResponseSchemaInput{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Resource.Responses == nil || len(result.Resource.Responses) != 0 {
+		t.Fatalf("expected non-nil empty responses, got %#v", result.Resource.Responses)
+	}
+}
+
+func TestReplaceResponsesRejectsNonEndpointAndDuplicateStatus(t *testing.T) {
+	service, repository := newTestService()
+
+	_, err := service.ReplaceResponses(context.Background(), "col_test", "res_test", nil, []ResponseSchemaInput{})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected non-endpoint validation error, got %v", err)
+	}
+
+	repository.workspace.Resources[0].Kind = entity.KindEndpoint
+	_, err = service.ReplaceResponses(context.Background(), "col_test", "res_test", nil, []ResponseSchemaInput{{Status: 200}, {Status: 200}})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected duplicate status validation error, got %v", err)
+	}
+	if repository.workspace.Rev != 3 {
+		t.Fatalf("failed mutations changed revision to %d", repository.workspace.Rev)
+	}
+}

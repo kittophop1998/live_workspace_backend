@@ -67,8 +67,8 @@ export PROJECT_ID='<room_code>'
 เรียก `initialize`:
 
 ```bash
-curl -X POST "$MCP_URL" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
+curl -X POST "https://live-workspace-api.up.railway.app/mcp" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODU1NTAxMTEsImlhdCI6MTc4Mjk1ODExMSwic3ViIjoiY29sXzYzMzljZWU0Iiwid29ya3NwYWNlX2lkIjoiODUxOTc3In0.6OkXELu5MRGLXq65z6x7q5YkmKjfAg5RpZfLph5qY1o" \
   -H 'Content-Type: application/json' \
   -d '{
     "jsonrpc": "2.0",
@@ -88,8 +88,8 @@ curl -X POST "$MCP_URL" \
 ดูรายการ tools:
 
 ```bash
-curl -X POST "$MCP_URL" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
+curl -X POST "https://live-workspace-api.up.railway.app/mcp" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODU1NTAxMTEsImlhdCI6MTc4Mjk1ODExMSwic3ViIjoiY29sXzYzMzljZWU0Iiwid29ya3NwYWNlX2lkIjoiODUxOTc3In0.6OkXELu5MRGLXq65z6x7q5YkmKjfAg5RpZfLph5qY1o" \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
@@ -97,8 +97,8 @@ curl -X POST "$MCP_URL" \
 เรียก tool ตัวอย่าง:
 
 ```bash
-curl -X POST "$MCP_URL" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
+curl -X POST "https://live-workspace-api.up.railway.app/mcp" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODU1NTAxMTEsImlhdCI6MTc4Mjk1ODExMSwic3ViIjoiY29sXzYzMzljZWU0Iiwid29ya3NwYWNlX2lkIjoiODUxOTc3In0.6OkXELu5MRGLXq65z6x7q5YkmKjfAg5RpZfLph5qY1o" \
   -H 'Content-Type: application/json' \
   -d "{
     \"jsonrpc\": \"2.0\",

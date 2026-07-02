@@ -85,6 +85,23 @@ type UpdateFieldInput struct {
 	Value            *any
 }
 
+type ResponseFieldInput struct {
+	ID          string
+	Key         string
+	Type        string
+	Required    bool
+	State       string
+	Change      string
+	Description *string
+	Value       any
+}
+
+type ResponseSchemaInput struct {
+	Status      int
+	Description *string
+	Fields      []ResponseFieldInput
+}
+
 type MutationResult struct {
 	Rev      int64
 	Resource *entity.Resource
@@ -156,6 +173,7 @@ func (s *Service) CreateResource(ctx context.Context, actorID string, expected *
 			resource.Method, resource.Path = &method, &path
 			status := entity.EndpointStatusDraft
 			resource.Status = &status
+			resource.Responses = []entity.ResponseSchema{}
 		}
 		ws.Resources = append(ws.Resources, resource)
 		return &ws.Resources[len(ws.Resources)-1], activity(actor, "created", resource.Name, resource.ID, now), nil
@@ -211,6 +229,25 @@ func (s *Service) DeleteResource(ctx context.Context, actorID, id string, expect
 		ws.Resources = append(ws.Resources[:index], ws.Resources[index+1:]...)
 		ws.Comments = removeResourceComments(ws.Comments, id)
 		return &deleted, activity(actor, "removed", deleted.Name, id, s.now()), nil
+	})
+}
+
+func (s *Service) ReplaceResponses(ctx context.Context, actorID, resourceID string, expected *int64, inputs []ResponseSchemaInput) (*MutationResult, error) {
+	responses, err := responseSchemas(inputs)
+	if err != nil {
+		return nil, err
+	}
+	return s.mutateResource(ctx, actorID, expected, "resource.updated", func(ws *entity.Workspace, actor entity.Collaborator) (*entity.Resource, entity.ActivityEvent, error) {
+		resource, _ := findResource(ws, resourceID)
+		if resource == nil {
+			return nil, entity.ActivityEvent{}, notFound("resource", resourceID)
+		}
+		if resource.Kind != entity.KindEndpoint {
+			return nil, entity.ActivityEvent{}, validation("response schemas are only valid for endpoints", nil)
+		}
+		resource.Responses = responses
+		resource.UpdatedAt, resource.UpdatedBy = s.now(), actor.Name
+		return resource, activity(actor, "edited", "responses", resourceID, resource.UpdatedAt), nil
 	})
 }
 
@@ -506,8 +543,50 @@ func validateField(key, fieldType, state string) error {
 	return nil
 }
 
+func responseSchemas(inputs []ResponseSchemaInput) ([]entity.ResponseSchema, error) {
+	out := make([]entity.ResponseSchema, len(inputs))
+	statuses := make(map[int]struct{}, len(inputs))
+	for i, input := range inputs {
+		if input.Status != 0 && (input.Status < 100 || input.Status > 599) {
+			return nil, validation("invalid response status", map[string]any{"status": input.Status})
+		}
+		if _, exists := statuses[input.Status]; exists {
+			return nil, validation("duplicate response status", map[string]any{"status": input.Status})
+		}
+		statuses[input.Status] = struct{}{}
+		fields := make([]entity.SchemaField, len(input.Fields))
+		keys := make(map[string]struct{}, len(input.Fields))
+		for j, field := range input.Fields {
+			key := strings.TrimSpace(field.Key)
+			if strings.TrimSpace(field.ID) == "" || key == "" || !fieldTypes[field.Type] || !validState(field.State) || !validChange(field.Change) {
+				return nil, validation("invalid response field", map[string]any{"status": input.Status, "key": field.Key})
+			}
+			if _, exists := keys[key]; exists {
+				return nil, validation("duplicate response field key", map[string]any{"status": input.Status, "key": key})
+			}
+			keys[key] = struct{}{}
+			if field.Type != "json" && field.Value != nil {
+				return nil, validation("value is only valid for json fields", map[string]any{"status": input.Status, "key": key})
+			}
+			if _, err := json.Marshal(field.Value); err != nil {
+				return nil, validation("value must be valid JSON", map[string]any{"status": input.Status, "key": key})
+			}
+			fields[j] = entity.SchemaField{
+				ID: strings.TrimSpace(field.ID), Key: key, Type: field.Type, Required: field.Required,
+				State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change),
+				Description: field.Description, Value: field.Value,
+			}
+		}
+		out[i] = entity.ResponseSchema{Status: input.Status, Description: input.Description, Fields: fields}
+	}
+	return out, nil
+}
+
 func validKind(v string) bool  { return v == "endpoint" || v == "database" || v == "model" }
 func validState(v string) bool { return v == "draft" || v == "ready" || v == "breaking" }
+func validChange(v string) bool {
+	return v == "stable" || v == "added" || v == "modified" || v == "removed"
+}
 func validEndpointStatus(v string) bool {
 	switch v {
 	case "draft", "inprogress", "testing", "done":

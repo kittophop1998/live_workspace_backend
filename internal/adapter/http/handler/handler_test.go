@@ -30,3 +30,21 @@ func TestUpdateFieldRequestDistinguishesMissingAndNullValue(t *testing.T) {
 		t.Fatal("nested value was not marked as set")
 	}
 }
+
+func TestReplaceResponsesRequestDistinguishesMissingAndEmpty(t *testing.T) {
+	var missing replaceResponsesRequest
+	if err := json.Unmarshal([]byte(`{}`), &missing); err != nil {
+		t.Fatal(err)
+	}
+	if missing.Responses != nil {
+		t.Fatalf("missing responses was set: %#v", missing.Responses)
+	}
+
+	var empty replaceResponsesRequest
+	if err := json.Unmarshal([]byte(`{"responses":[]}`), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.Responses == nil || *empty.Responses == nil || len(*empty.Responses) != 0 {
+		t.Fatalf("expected explicit empty responses, got %#v", empty.Responses)
+	}
+}

@@ -136,6 +136,47 @@ func (h *Handler) DeleteResource(c *gin.Context) {
 	success(c, http.StatusOK, gin.H{"rev": result.Rev, "resource_id": c.Param("id")})
 }
 
+type replaceResponsesRequest struct {
+	Responses *[]responseSchemaRequest `json:"responses" binding:"required"`
+}
+
+type responseSchemaRequest struct {
+	Status      int                    `json:"status"`
+	Description *string                `json:"description"`
+	Fields      []responseFieldRequest `json:"fields"`
+}
+
+type responseFieldRequest struct {
+	ID          string  `json:"id"`
+	Key         string  `json:"key"`
+	Type        string  `json:"type"`
+	Required    bool    `json:"required"`
+	State       string  `json:"state"`
+	Change      string  `json:"change"`
+	Description *string `json:"description"`
+	Value       any     `json:"value"`
+}
+
+func (h *Handler) ReplaceResponses(c *gin.Context) {
+	var request replaceResponsesRequest
+	if !bind(c, &request) {
+		return
+	}
+	inputs := make([]usecase.ResponseSchemaInput, len(*request.Responses))
+	for i, response := range *request.Responses {
+		fields := make([]usecase.ResponseFieldInput, len(response.Fields))
+		for j, field := range response.Fields {
+			fields[j] = usecase.ResponseFieldInput{
+				ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
+				State: field.State, Change: field.Change, Description: field.Description, Value: field.Value,
+			}
+		}
+		inputs[i] = usecase.ResponseSchemaInput{Status: response.Status, Description: response.Description, Fields: fields}
+	}
+	result, err := h.serviceFor(c).ReplaceResponses(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), inputs)
+	h.writeMutation(c, result, err, http.StatusOK)
+}
+
 type addFieldRequest struct {
 	Key         string  `json:"key" binding:"required"`
 	Type        string  `json:"type" binding:"required"`

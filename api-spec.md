@@ -141,6 +141,7 @@ A unit in the explorer: an API endpoint, a database table, or a schema model.
   "state": "breaking",       // rollup = worst state among live (non-removed) fields
   "status": "inprogress",    // endpoints only: workflow status — draft|inprogress|testing|done (null otherwise)
   "fields": [ "...SchemaField" ],
+  "responses": [ "...ResponseSchema" ], // endpoints only: per-status response shapes (may be []/omitted)
   "updated_at": "2026-06-30T08:00:00Z",
   "updated_by": "Noah Reed"  // collaborator display name
 }
@@ -149,18 +150,21 @@ A unit in the explorer: an API endpoint, a database table, or a schema model.
 > display it; they do not author it directly. `status` is the **client-authored**
 > workflow/progress attribute (see EndpointStatus below) — endpoints only, settable
 > via `PATCH /resources/{id}`, and used to filter the left explorer
-> (`GET /resources?status=`). `updated_at` / `updated_by` are set by the server on
-> every mutation.
+> (`GET /resources?status=`). `responses` is the endpoint's per-status response
+> schemas (see ResponseSchema below). `updated_at` / `updated_by` are set by the
+> server on every mutation.
 
-### ResponseSchema (frontend-local)
+### ResponseSchema
 The per-status response shapes shown **below the request body** of the API Endpoint
 view as a **status tab strip** (`200` / `400` / `500` …) — each tab opens the same
 Visual / JSON Schema / Example JSON / Example TypeScript editor as the request body.
-The backend `Resource` model has **no slot for these yet**, so the frontend keeps
-them client-side, persisted in `localStorage`
-(`live-workspace:response-schemas`, keyed by `resource.id`) — see
-`src/lib/responseSchemas.ts`. They are populated manually or by the **spec import**
-flow (`src/lib/specImport.ts`, OpenAPI YAML/JSON or Postman collection).
+Persisted on the backend as the `Resource.responses` array (endpoints only) and
+synced over the WebSocket like the rest of the resource. Populated manually, or by
+the **spec import** flow (`src/lib/specImport.ts`, OpenAPI YAML/JSON or Postman
+collection). The frontend keeps a `localStorage` cache
+(`live-workspace:response-schemas`, keyed by `resource.id`, see
+`src/lib/responseSchemas.ts`) as an offline fallback — replaced by server data
+whenever `Resource.responses` is present.
 ```json
 {
   "status": 200,                 // HTTP status; 0 = OpenAPI "default"
@@ -168,9 +172,9 @@ flow (`src/lib/specImport.ts`, OpenAPI YAML/JSON or Postman collection).
   "fields": [ "...SchemaField" ] // same SchemaField shape as the request blueprint
 }
 ```
-> **When the backend adopts these:** add a `responses: ResponseSchema[]` array to
-> `Resource` (snake_case on the wire), normalize it in
-> `src/services/workspace.service.ts`, and the local store becomes a cache/fallback.
+> Written via **`PUT /resources/{id}/responses`** (§3), which replaces the whole
+> array. On the wire `Resource.responses` is snake_case-free (`status`,
+> `description`, `fields`); it is normalized in `src/services/workspace.service.ts`.
 
 ### Bookmark (frontend-local)
 The explorer pins bookmarked resources in a **"Bookmarked" group at the top**.
@@ -186,7 +190,7 @@ A per-endpoint **workflow/progress** status shown as a dropdown pill in the endp
 header. It is **distinct from `Resource.state`** (the server-derived field rollup
 `draft | ready | breaking`): this tracks how far the endpoint is in the build
 pipeline. The backend `Resource` model has **no slot for it yet**, so — like
-bookmarks and response schemas — it lives entirely client-side in `localStorage`
+bookmarks — it lives entirely client-side in `localStorage`
 (`live-workspace:endpoint-status`, keyed by `resource.id`) — see
 `src/lib/endpointStatus.ts`. Only meaningful for `kind:"endpoint"`; defaults to
 `draft`.
@@ -362,6 +366,11 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | PATCH | `/resources/{id}/fields/{field_id}` | Update key/type/required/state/description |
 | DELETE | `/resources/{id}/fields/{field_id}` | Remove a field (see soft-delete rule) |
 
+### Response schemas
+| method | path | purpose |
+|--------|------|---------|
+| PUT | `/resources/{id}/responses` | Replace the endpoint's per-status response schemas (whole `ResponseSchema[]`); body `{ "responses": [ ...ResponseSchema ] }` |
+
 ### Comments
 | method | path | purpose |
 |--------|------|---------|
@@ -419,6 +428,7 @@ All payloads reuse the §2 models. Clients merge by `rev` (ignore `rev <= local`
 | `resource.created` / `resource.updated` / `resource.deleted` | `{ "rev", "resource": Resource }` (deleted → `{ "rev", "resource_id" }`) |
 | `resource.cleared` | `{ "rev", "resource_ids": [ "res_…" ] }` (bulk delete-all; clients drop every listed id + its comments) |
 | `field.created` / `field.updated` / `field.removed` | `{ "rev", "resource": Resource }` (send the whole updated resource so `state` rollup + fields stay consistent) |
+| `resource.updated` (from `PUT /resources/{id}/responses`) | `{ "rev", "resource": Resource }` — reuses the `resource.updated` frame; the resource carries the new `responses` array |
 | `comment.created` / `comment.deleted` | `{ "rev", "comment": Comment }` / `{ "rev", "comment_id" }` |
 | `activity.created` | `{ "activity": ActivityEvent }` |
 | `presence.update` | `Presence` (a peer's heartbeat) |
@@ -522,6 +532,25 @@ Request (any subset of `key`, `type`, `required`, `state`, `description`, `value
   excluded from generated code).
 
 Response `data`: `{ "rev", "resource": { "...Resource" } }`
+
+### PUT `/resources/{id}/responses`
+Replaces the endpoint's per-status response schemas with the posted array (whole-array
+semantics — the client sends the full desired state). Request:
+```json
+{
+  "responses": [
+    { "status": 200, "description": "OK",
+      "fields": [ { "id": "fld_id", "key": "id", "type": "uuid", "required": true,
+                    "state": "ready", "change": "added", "description": null, "value": null } ] },
+    { "status": 404, "description": "Not Found", "fields": [] }
+  ]
+}
+```
+- Endpoints only; bumps `rev`, sets `updated_at`/`updated_by`, appends an
+  `ActivityEvent` (e.g. `verb:"edited"`, `target:"responses"`), and broadcasts
+  `resource.updated` over the WebSocket.
+- Response `data`: `{ "rev", "resource": { "...Resource" } }` (full resource,
+  including the stored `responses`).
 
 ### POST `/resources/{id}/comments`
 Request:

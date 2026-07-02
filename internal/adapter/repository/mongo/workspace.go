@@ -39,11 +39,17 @@ type fieldDocument struct {
 	Description                  *string
 	Value                        any
 }
+type responseSchemaDocument struct {
+	Status      int
+	Description *string
+	Fields      []fieldDocument
+}
 type resourceDocument struct {
 	ID, Name, Kind, State, UpdatedBy string
 	Method, Path                     *string
 	Status                           *string
 	Fields                           []fieldDocument
+	Responses                        []responseSchemaDocument
 	UpdatedAt                        time.Time
 }
 type commentDocument struct {
@@ -117,7 +123,17 @@ func toDocument(ws *entity.Workspace) workspaceDocument {
 		item := resourceDocument{ID: value.ID, Name: value.Name, Kind: string(value.Kind), Method: value.Method, Path: value.Path, State: string(value.State), Status: status, UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 		item.Fields = make([]fieldDocument, len(value.Fields))
 		for j, field := range value.Fields {
-			item.Fields[j] = fieldDocument{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description, Value: field.Value}
+			item.Fields[j] = toFieldDocument(field)
+		}
+		if value.Kind == entity.KindEndpoint {
+			item.Responses = make([]responseSchemaDocument, len(value.Responses))
+			for j, response := range value.Responses {
+				fields := make([]fieldDocument, len(response.Fields))
+				for k, field := range response.Fields {
+					fields[k] = toFieldDocument(field)
+				}
+				item.Responses[j] = responseSchemaDocument{Status: response.Status, Description: response.Description, Fields: fields}
+			}
 		}
 		doc.Resources[i] = item
 	}
@@ -148,7 +164,17 @@ func toEntity(doc workspaceDocument) *entity.Workspace {
 		}
 		item := entity.Resource{ID: value.ID, Name: value.Name, Kind: entity.ResourceKind(value.Kind), Method: value.Method, Path: value.Path, State: entity.FieldState(value.State), Status: status, UpdatedAt: value.UpdatedAt, UpdatedBy: value.UpdatedBy}
 		for _, field := range value.Fields {
-			item.Fields = append(item.Fields, entity.SchemaField{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change), Description: field.Description, Value: normalizeBSONValue(field.Value)})
+			item.Fields = append(item.Fields, toFieldEntity(field))
+		}
+		if value.Kind == string(entity.KindEndpoint) {
+			item.Responses = make([]entity.ResponseSchema, len(value.Responses))
+			for j, response := range value.Responses {
+				fields := make([]entity.SchemaField, len(response.Fields))
+				for k, field := range response.Fields {
+					fields[k] = toFieldEntity(field)
+				}
+				item.Responses[j] = entity.ResponseSchema{Status: response.Status, Description: response.Description, Fields: fields}
+			}
 		}
 		ws.Resources = append(ws.Resources, item)
 	}
@@ -159,6 +185,22 @@ func toEntity(doc workspaceDocument) *entity.Workspace {
 		ws.Activity = append(ws.Activity, entity.ActivityEvent{ID: value.ID, Actor: value.Actor, Verb: value.Verb, Target: value.Target, ResourceID: value.ResourceID, At: value.At})
 	}
 	return ws
+}
+
+func toFieldDocument(field entity.SchemaField) fieldDocument {
+	return fieldDocument{
+		ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
+		State: string(field.State), Change: string(field.Change),
+		Description: field.Description, Value: field.Value,
+	}
+}
+
+func toFieldEntity(field fieldDocument) entity.SchemaField {
+	return entity.SchemaField{
+		ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
+		State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change),
+		Description: field.Description, Value: normalizeBSONValue(field.Value),
+	}
 }
 
 func normalizeBSONValue(value any) any {

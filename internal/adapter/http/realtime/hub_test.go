@@ -23,9 +23,19 @@ func TestClearEventPayload(t *testing.T) {
 func TestResourcePayloadIncludesEndpointStatus(t *testing.T) {
 	status := entity.EndpointStatusTesting
 
-	got := resourcePayload(entity.Resource{ID: "res_test", Status: &status})
+	got := resourcePayload(entity.Resource{
+		ID: "res_test", Kind: entity.KindEndpoint, Status: &status,
+		Responses: []entity.ResponseSchema{{
+			Status: 200,
+			Fields: []entity.SchemaField{{ID: "fld_id", Key: "id", Type: "uuid"}},
+		}},
+	})
 
 	if got["status"] != &status {
 		t.Fatalf("unexpected status payload: %#v", got["status"])
+	}
+	responses, ok := got["responses"].([]any)
+	if !ok || len(responses) != 1 {
+		t.Fatalf("unexpected responses payload: %#v", got["responses"])
 	}
 }
