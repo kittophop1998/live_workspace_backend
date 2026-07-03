@@ -1,9 +1,89 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+
+	"kingdom_manager/backend/internal/adapter/http/middleware"
+	"kingdom_manager/backend/internal/domain/entity"
+	"kingdom_manager/backend/internal/usecase"
 )
+
+// memRepo is a minimal in-memory WorkspaceRepository for HTTP-layer tests.
+type memRepo struct{ ws *entity.Workspace }
+
+func (m *memRepo) Get(context.Context, string) (*entity.Workspace, error) {
+	copy := *m.ws
+	copy.Resources = append([]entity.Resource(nil), m.ws.Resources...)
+	return &copy, nil
+}
+func (m *memRepo) Create(context.Context, *entity.Workspace) error         { return nil }
+func (m *memRepo) CreateIfAbsent(context.Context, *entity.Workspace) error { return nil }
+func (m *memRepo) Save(_ context.Context, ws *entity.Workspace, _ int64) error {
+	m.ws = ws
+	return nil
+}
+
+func TestImportResourcesHandlerCreatesEndpoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &memRepo{ws: &entity.Workspace{
+		ID: "wsp_test", Rev: 5,
+		Collaborators: []entity.Collaborator{{ID: "col_test", Name: "Tester"}},
+	}}
+	h := New(usecase.NewService(repo, "wsp_test", nil), nil, nil, nil, nil)
+
+	body := `{"endpoints":[
+		{"name":"getUser","method":"get","path":"/users/{id}",
+		 "fields":[{"key":"expand","type":"string","required":false}],
+		 "responses":[{"status":200,"fields":[{"id":"rsf_1","key":"id","type":"uuid","required":true,"state":"ready","change":"added"}]}]},
+		{"name":"createUser","method":"POST","path":"/users"}
+	]}`
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/resources/import", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(middleware.CollaboratorKey, "col_test")
+	c.Set(middleware.WorkspaceKey, "wsp_test")
+
+	h.ImportResources(c)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d — body: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			Rev       int64 `json:"rev"`
+			Resources []struct {
+				Method    string `json:"method"`
+				Fields    []any  `json:"fields"`
+				Responses []any  `json:"responses"`
+			} `json:"resources"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Data.Rev != 6 || len(out.Data.Resources) != 2 {
+		t.Fatalf("unexpected result: rev=%d resources=%d", out.Data.Rev, len(out.Data.Resources))
+	}
+	if out.Data.Resources[0].Method != "GET" {
+		t.Fatalf("method not upper-cased: %q", out.Data.Resources[0].Method)
+	}
+	// No seeded id field — only the imported request field.
+	if len(out.Data.Resources[0].Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(out.Data.Resources[0].Fields))
+	}
+	if len(out.Data.Resources[0].Responses) != 1 {
+		t.Fatalf("expected 1 response schema, got %d", len(out.Data.Resources[0].Responses))
+	}
+}
 
 func TestUpdateFieldRequestDistinguishesMissingAndNullValue(t *testing.T) {
 	var missing updateFieldRequest

@@ -211,6 +211,12 @@ func eventPayload(event usecase.Event) any {
 	switch value := event.Payload.(type) {
 	case *usecase.ClearResult:
 		return map[string]any{"rev": value.Rev, "resource_ids": value.ResourceIDs}
+	case *usecase.ImportResult:
+		resources := make([]any, 0, len(value.Resources))
+		for _, item := range value.Resources {
+			resources = append(resources, resourcePayload(item))
+		}
+		return map[string]any{"rev": value.Rev, "resources": resources}
 	case *usecase.MutationResult:
 		if event.Type == "resource.deleted" && value.Resource != nil {
 			return map[string]any{"rev": value.Rev, "resource_id": value.Resource.ID}

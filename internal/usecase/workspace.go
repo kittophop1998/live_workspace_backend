@@ -303,6 +303,141 @@ func (s *Service) DeleteAllResources(ctx context.Context, actorID string, expect
 	return result, nil
 }
 
+// ImportEndpointInput is one endpoint from a parsed OpenAPI/Postman spec: its
+// request body fields and per-status response schemas, ready to persist.
+type ImportEndpointInput struct {
+	Name      string
+	Method    string
+	Path      string
+	Fields    []ImportFieldInput
+	Responses []ResponseSchemaInput
+}
+
+// ImportFieldInput is a request-body field on an imported endpoint. Unlike
+// AddField the backend assigns the id; `Value` is kept for json fields.
+type ImportFieldInput struct {
+	Key         string
+	Type        string
+	Required    bool
+	Description *string
+	Value       any
+}
+
+// ImportResult reports a bulk endpoint import (one rev-bumping mutation).
+type ImportResult struct {
+	Rev       int64
+	Resources []entity.Resource
+}
+
+// ImportResources creates many endpoints from a spec in a SINGLE rev-bumping
+// mutation (one save, one broadcast). It replaces the old client-side loop of
+// create-then-N-field-calls, which dropped endpoints on any transient failure
+// mid-batch. Everything is validated and built up front, so a bad item fails the
+// whole import atomically — nothing is persisted. Endpoints are created WITHOUT
+// the default seeded `id` field so they mirror the spec exactly.
+func (s *Service) ImportResources(ctx context.Context, actorID string, expected *int64, inputs []ImportEndpointInput) (*ImportResult, error) {
+	if len(inputs) == 0 {
+		return nil, validation("no endpoints to import", nil)
+	}
+	now := s.now()
+	built := make([]entity.Resource, len(inputs))
+	for i, in := range inputs {
+		if strings.TrimSpace(in.Name) == "" {
+			return nil, validation("endpoint name is required", map[string]any{"index": i})
+		}
+		method := strings.ToUpper(strings.TrimSpace(in.Method))
+		if method == "" {
+			method = "GET"
+		}
+		path := in.Path
+		if path == "" {
+			path = "/api/v1/new"
+		}
+		if !validMethod(method) || !strings.HasPrefix(path, "/") {
+			return nil, validation("endpoint requires a valid method and absolute path", map[string]any{"index": i, "name": in.Name})
+		}
+		fields, err := importFields(in.Fields)
+		if err != nil {
+			return nil, err
+		}
+		responses, err := responseSchemas(in.Responses)
+		if err != nil {
+			return nil, err
+		}
+		status := entity.EndpointStatusDraft
+		resource := entity.Resource{
+			ID: "res_" + shortID(), Name: strings.TrimSpace(in.Name), Kind: entity.KindEndpoint,
+			Method: &method, Path: &path, Status: &status, Fields: fields, Responses: responses, UpdatedAt: now,
+		}
+		resource.RollupState()
+		built[i] = resource
+	}
+
+	ws, err := s.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if expected != nil && *expected != ws.Rev {
+		return nil, &Error{Kind: ErrRevConflict, Message: "workspace revision is stale", Details: map[string]any{"current_rev": ws.Rev}}
+	}
+	actor, ok := collaborator(ws, actorID)
+	if !ok {
+		return nil, notFound("collaborator", actorID)
+	}
+	for i := range built {
+		built[i].UpdatedBy = actor.Name
+	}
+	oldRev := ws.Rev
+	ws.Resources = append(ws.Resources, built...)
+	event := activity(actor, "imported", fmt.Sprintf("%d endpoints", len(built)), "", now)
+	ws.Rev++
+	ws.Activity = append(ws.Activity, event)
+	if len(ws.Activity) > 1000 {
+		ws.Activity = ws.Activity[len(ws.Activity)-1000:]
+	}
+	if err := s.repo.Save(ctx, ws, oldRev); err != nil {
+		if errors.Is(err, port.ErrRevisionConflict) {
+			return nil, &Error{Kind: ErrRevConflict, Message: "workspace was changed by another client"}
+		}
+		return nil, fmt.Errorf("save workspace: %w", err)
+	}
+	result := &ImportResult{Rev: ws.Rev, Resources: append([]entity.Resource(nil), built...)}
+	if s.publisher != nil {
+		s.publisher.Publish(Event{Type: "resource.imported", Payload: result, WorkspaceID: s.workspaceID})
+		s.publisher.Publish(Event{Type: "activity.created", Payload: event, WorkspaceID: s.workspaceID})
+	}
+	return result, nil
+}
+
+// importFields validates + builds request-body fields for an imported endpoint.
+// Mirrors AddField (state draft, change added) but assigns ids and keeps json
+// values. Rejects duplicate keys within the same endpoint.
+func importFields(inputs []ImportFieldInput) ([]entity.SchemaField, error) {
+	fields := make([]entity.SchemaField, 0, len(inputs))
+	keys := make(map[string]struct{}, len(inputs))
+	for _, in := range inputs {
+		key := strings.TrimSpace(in.Key)
+		if key == "" || !fieldTypes[in.Type] {
+			return nil, validation("import field requires a key and valid type", map[string]any{"key": in.Key})
+		}
+		if _, dup := keys[key]; dup {
+			return nil, validation("duplicate field key", map[string]any{"key": key})
+		}
+		keys[key] = struct{}{}
+		if in.Type != "json" && in.Value != nil {
+			return nil, validation("value is only valid for json fields", map[string]any{"key": key})
+		}
+		if _, err := json.Marshal(in.Value); err != nil {
+			return nil, validation("value must be valid JSON", map[string]any{"key": key})
+		}
+		fields = append(fields, entity.SchemaField{
+			ID: "fld_" + shortID(), Key: key, Type: in.Type, Required: in.Required,
+			State: entity.StateDraft, Change: entity.ChangeAdded, Description: in.Description, Value: in.Value,
+		})
+	}
+	return fields, nil
+}
+
 func (s *Service) AddField(ctx context.Context, actorID, resourceID string, expected *int64, in FieldInput) (*MutationResult, error) {
 	if err := validateField(in.Key, in.Type, in.State); err != nil {
 		return nil, err

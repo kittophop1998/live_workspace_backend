@@ -291,6 +291,92 @@ func TestDeleteAllResourcesEmptyWorkspaceIsNoOp(t *testing.T) {
 	}
 }
 
+func TestImportResourcesCreatesEndpointsAtomically(t *testing.T) {
+	service, repository := newTestService()
+	publisher := &recordingPublisher{}
+	service.publisher = publisher
+	sample := any(map[string]any{"nested": true})
+
+	result, err := service.ImportResources(context.Background(), "col_test", nil, []ImportEndpointInput{
+		{
+			Name: "getUser", Method: "get", Path: "/users/{id}",
+			Fields: []ImportFieldInput{
+				{Key: "q", Type: "string", Required: true},
+				{Key: "meta", Type: "json", Value: sample},
+			},
+			Responses: []ResponseSchemaInput{{
+				Status: 200,
+				Fields: []ResponseFieldInput{{ID: "rsf_1", Key: "id", Type: "uuid", Required: true, State: "ready", Change: "added"}},
+			}},
+		},
+		{Name: "createUser", Method: "POST", Path: "/users"},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rev != 4 || len(result.Resources) != 2 {
+		t.Fatalf("unexpected import result: rev=%d resources=%d", result.Rev, len(result.Resources))
+	}
+	// One save + one import event (+ one activity) for the whole batch.
+	if repository.saveCount != 1 {
+		t.Fatalf("expected one save, got %d", repository.saveCount)
+	}
+	if len(publisher.events) != 2 || publisher.events[0].Type != "resource.imported" || publisher.events[1].Type != "activity.created" {
+		t.Fatalf("unexpected events: %+v", publisher.events)
+	}
+	created := result.Resources[0]
+	if created.Method == nil || *created.Method != "GET" {
+		t.Fatalf("method not upper-cased: %v", created.Method)
+	}
+	// No seeded `id` field — imported endpoints mirror the spec exactly.
+	if len(created.Fields) != 2 || created.Fields[0].Key != "q" || created.Fields[1].Value == nil {
+		t.Fatalf("unexpected imported fields: %+v", created.Fields)
+	}
+	if created.Fields[0].Change != entity.ChangeAdded {
+		t.Fatalf("imported field change = %s", created.Fields[0].Change)
+	}
+	if len(created.Responses) != 1 || created.Responses[0].Status != 200 {
+		t.Fatalf("unexpected responses: %+v", created.Responses)
+	}
+	if len(repository.workspace.Resources) != 3 { // 1 seeded model + 2 imported
+		t.Fatalf("expected 3 resources persisted, got %d", len(repository.workspace.Resources))
+	}
+}
+
+func TestImportResourcesRejectsBadItemWithoutPersisting(t *testing.T) {
+	service, repository := newTestService()
+
+	_, err := service.ImportResources(context.Background(), "col_test", nil, []ImportEndpointInput{
+		{Name: "ok", Method: "GET", Path: "/ok"},
+		{Name: "bad", Method: "GET", Path: "no-leading-slash"},
+	})
+
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	if repository.workspace.Rev != 3 || len(repository.workspace.Resources) != 1 {
+		t.Fatalf("failed import mutated workspace: rev=%d resources=%d", repository.workspace.Rev, len(repository.workspace.Resources))
+	}
+	if repository.saveCount != 0 {
+		t.Fatalf("failed import saved %d times", repository.saveCount)
+	}
+}
+
+func TestImportResourcesRejectsStaleRevision(t *testing.T) {
+	service, repository := newTestService()
+	stale := int64(2)
+
+	_, err := service.ImportResources(context.Background(), "col_test", &stale, []ImportEndpointInput{{Name: "ok", Method: "GET", Path: "/ok"}})
+
+	if !errors.Is(err, ErrRevConflict) {
+		t.Fatalf("expected revision conflict, got %v", err)
+	}
+	if repository.saveCount != 0 {
+		t.Fatalf("stale import saved %d times", repository.saveCount)
+	}
+}
+
 func TestReplaceResponsesPersistsAndPublishesResourceUpdate(t *testing.T) {
 	service, repository := newTestService()
 	draft := entity.EndpointStatusDraft

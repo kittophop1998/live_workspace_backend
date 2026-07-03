@@ -102,6 +102,63 @@ func (h *Handler) CreateResource(c *gin.Context) {
 	h.writeMutation(c, result, err, http.StatusCreated)
 }
 
+type importResourcesRequest struct {
+	Endpoints []importEndpointRequest `json:"endpoints" binding:"required"`
+}
+
+type importEndpointRequest struct {
+	Name      string                  `json:"name" binding:"required"`
+	Method    string                  `json:"method"`
+	Path      string                  `json:"path"`
+	Fields    []importFieldRequest    `json:"fields"`
+	Responses []responseSchemaRequest `json:"responses"`
+}
+
+type importFieldRequest struct {
+	Key         string  `json:"key"`
+	Type        string  `json:"type"`
+	Required    bool    `json:"required"`
+	Description *string `json:"description"`
+	Value       any     `json:"value"`
+}
+
+// ImportResources bulk-creates endpoints from a parsed spec in one mutation.
+func (h *Handler) ImportResources(c *gin.Context) {
+	var request importResourcesRequest
+	if !bind(c, &request) {
+		return
+	}
+	inputs := make([]usecase.ImportEndpointInput, len(request.Endpoints))
+	for i, ep := range request.Endpoints {
+		fields := make([]usecase.ImportFieldInput, len(ep.Fields))
+		for j, f := range ep.Fields {
+			fields[j] = usecase.ImportFieldInput{Key: f.Key, Type: f.Type, Required: f.Required, Description: f.Description, Value: f.Value}
+		}
+		responses := make([]usecase.ResponseSchemaInput, len(ep.Responses))
+		for j, response := range ep.Responses {
+			respFields := make([]usecase.ResponseFieldInput, len(response.Fields))
+			for k, field := range response.Fields {
+				respFields[k] = usecase.ResponseFieldInput{
+					ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
+					State: field.State, Change: field.Change, Description: field.Description, Value: field.Value,
+				}
+			}
+			responses[j] = usecase.ResponseSchemaInput{Status: response.Status, Description: response.Description, Fields: respFields}
+		}
+		inputs[i] = usecase.ImportEndpointInput{Name: ep.Name, Method: ep.Method, Path: ep.Path, Fields: fields, Responses: responses}
+	}
+	result, err := h.serviceFor(c).ImportResources(c.Request.Context(), middleware.CollaboratorID(c), revision(c), inputs)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	resources := make([]resourceResponse, len(result.Resources))
+	for i, resource := range result.Resources {
+		resources[i] = resourceDTO(resource)
+	}
+	success(c, http.StatusCreated, gin.H{"rev": result.Rev, "resources": resources})
+}
+
 type updateResourceRequest struct {
 	Name   *string `json:"name"`
 	Method *string `json:"method"`

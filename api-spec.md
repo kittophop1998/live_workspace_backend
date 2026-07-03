@@ -355,6 +355,7 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | GET | `/resources` | List resources (`?kind=endpoint\|database\|model` and/or `?status=draft\|inprogress\|testing\|done` optional; `status` applies to endpoints only) |
 | GET | `/resources/{id}` | One resource (with fields) |
 | POST | `/resources` | Create a resource |
+| POST | `/resources/import` | **Bulk-create endpoints from a parsed spec** in one atomic mutation (backs the "Import API" recreate step) |
 | DELETE | `/resources` | **Delete ALL resources in the room** (clears the workspace; backs the "Import API" wipe-then-recreate flow) |
 | PATCH | `/resources/{id}` | Rename / set `method` / `path` |
 | DELETE | `/resources/{id}` | Delete a resource |
@@ -427,6 +428,7 @@ All payloads reuse the §2 models. Clients merge by `rev` (ignore `rev <= local`
 | `snapshot` | `WorkspaceSnapshot` (sent on connect) |
 | `resource.created` / `resource.updated` / `resource.deleted` | `{ "rev", "resource": Resource }` (deleted → `{ "rev", "resource_id" }`) |
 | `resource.cleared` | `{ "rev", "resource_ids": [ "res_…" ] }` (bulk delete-all; clients drop every listed id + its comments) |
+| `resource.imported` | `{ "rev", "resources": [ Resource, … ] }` (bulk import; **all resources share the one `rev`** — clients must add them in a single merge, not one-by-one) |
 | `field.created` / `field.updated` / `field.removed` | `{ "rev", "resource": Resource }` (send the whole updated resource so `state` rollup + fields stay consistent) |
 | `resource.updated` (from `PUT /resources/{id}/responses`) | `{ "rev", "resource": Resource }` — reuses the `resource.updated` frame; the resource carries the new `responses` array |
 | `comment.created` / `comment.deleted` | `{ "rev", "comment": Comment }` / `{ "rev", "comment_id" }` |
@@ -474,7 +476,18 @@ Request:
 ```json
 { "name": "createOrder", "kind": "endpoint", "method": "POST", "path": "/api/v1/orders" }
 ```
-Response `data`: the created `Resource` (server seeds an `id` field, `state:"draft"`).
+Response `data`: the created `Resource` (`state:"draft"`).
+
+> **Seeded `id` field — behavior change (TODO in `usecase.CreateResource`).** The
+> server currently seeds a default `id` (`type:"uuid"`) field on *every* create
+> (`internal/usecase/workspace.go`). This is wrong for **endpoints**: a `GET`
+> sends query params and a `POST` sends a request body — neither wants a phantom
+> `id`. Desired contract:
+> - `kind:"endpoint"` → create with **no** seeded fields (empty `fields:[]`).
+> - `kind:"database"` / `kind:"model"` → keep the seeded `id`.
+>
+> The client currently strips seeded fields from new/imported endpoints as a
+> workaround; remove that workaround once this lands.
 
 ### PATCH `/resources/{id}`
 Request (any subset):
@@ -504,6 +517,46 @@ without bumping or broadcasting. Emits `resource.cleared` (§4) and one
 `ActivityEvent` (`verb:"cleared"`, `target:"all resources"`).
 
 Response `data`: `{ "rev": 46, "resource_ids": [ "res_user", "res_create_order" ] }`
+
+### POST `/resources/import`
+Bulk-creates endpoints from a parsed OpenAPI/Postman spec in **one** rev-bumping
+mutation (one save, one `resource.imported` broadcast, one `ActivityEvent`
+`verb:"imported"`). Replaces the old client loop of create-then-N-field-calls,
+which fired thousands of round-trips for a large spec and dropped the rest of the
+batch on the first transient failure. The **whole** import is atomic: if any
+endpoint is invalid, nothing is persisted (`422 VALIDATION_ERROR`). Imported
+endpoints are created with **no** seeded `id` field (they mirror the spec).
+Typically preceded by `DELETE /resources` (wipe-then-recreate).
+
+Each endpoint carries its request-body `fields` (ids assigned server-side; `value`
+kept for `json` fields) and full per-status `responses` (response field `id`s come
+from the client). `method` defaults to `GET`, `path` to `/api/v1/new`.
+
+Request:
+```json
+{
+  "endpoints": [
+    {
+      "name": "getUser", "method": "GET", "path": "/users/{id}",
+      "fields": [
+        { "key": "expand", "type": "string", "required": false }
+      ],
+      "responses": [
+        {
+          "status": 200, "description": "OK",
+          "fields": [
+            { "id": "rsf_1", "key": "id", "type": "uuid", "required": true,
+              "state": "ready", "change": "added" }
+          ]
+        }
+      ]
+    },
+    { "name": "createUser", "method": "POST", "path": "/users", "fields": [], "responses": [] }
+  ]
+}
+```
+Response `data`: `{ "rev": 47, "resources": [ { "...Resource" }, { "...Resource" } ] }`
+(the created resources, in request order, each with server-assigned ids).
 
 ### POST `/resources/{id}/fields`
 Request:
