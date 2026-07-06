@@ -46,13 +46,13 @@ func (h *Handler) HTTPTest(c *gin.Context) {
 // ParseFlow parses an uploaded Arazzo file (multipart "file" or a raw body) and
 // returns the structured preview WITHOUT persisting it.
 func (h *Handler) ParseFlow(c *gin.Context) {
-	data, ok := readUpload(c)
+	data, ok := h.readUpload(c)
 	if !ok {
 		return
 	}
 	flows, err := h.flowService.Parse(data)
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	out := make([]flowResponse, 0, len(flows))
@@ -74,7 +74,7 @@ func (h *Handler) SaveFlow(c *gin.Context) {
 	}
 	saved, err := h.flowService.Save(c.Request.Context(), middleware.WorkspaceID(c), actorName, request.toEntity())
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusCreated, flowDTO(saved))
@@ -83,7 +83,7 @@ func (h *Handler) SaveFlow(c *gin.Context) {
 func (h *Handler) ListFlows(c *gin.Context) {
 	flows, err := h.flowService.List(c.Request.Context(), middleware.WorkspaceID(c))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	out := make([]flowResponse, 0, len(flows))
@@ -96,7 +96,7 @@ func (h *Handler) ListFlows(c *gin.Context) {
 func (h *Handler) GetFlow(c *gin.Context) {
 	flow, err := h.flowService.Get(c.Request.Context(), middleware.WorkspaceID(c), c.Param("id"))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, flowDTO(flow))
@@ -105,7 +105,7 @@ func (h *Handler) GetFlow(c *gin.Context) {
 func (h *Handler) DeleteFlow(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.flowService.Delete(c.Request.Context(), middleware.WorkspaceID(c), id); err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, gin.H{"flow_id": id})
@@ -123,7 +123,7 @@ func (h *Handler) RunFlow(c *gin.Context) {
 	}
 	run, err := h.flowService.Run(c.Request.Context(), middleware.WorkspaceID(c), c.Param("id"), usecase.RunInput{BaseURL: request.BaseURL, Inputs: request.Inputs})
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusCreated, runDTO(run))
@@ -132,7 +132,7 @@ func (h *Handler) RunFlow(c *gin.Context) {
 func (h *Handler) ListFlowRuns(c *gin.Context) {
 	runs, err := h.flowService.ListRuns(c.Request.Context(), middleware.WorkspaceID(c), c.Param("id"))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	out := make([]runResponse, 0, len(runs))
@@ -145,7 +145,7 @@ func (h *Handler) ListFlowRuns(c *gin.Context) {
 func (h *Handler) GetFlowRun(c *gin.Context) {
 	run, err := h.flowService.GetRun(c.Request.Context(), middleware.WorkspaceID(c), c.Param("run_id"))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, runDTO(run))
@@ -153,24 +153,24 @@ func (h *Handler) GetFlowRun(c *gin.Context) {
 
 // readUpload pulls raw bytes from either a multipart "file" field or the request
 // body, so the frontend can send whichever is convenient.
-func readUpload(c *gin.Context) ([]byte, bool) {
+func (h *Handler) readUpload(c *gin.Context) ([]byte, bool) {
 	if file, err := c.FormFile("file"); err == nil {
 		opened, err := file.Open()
 		if err != nil {
-			writeError(c, err)
+			h.writeError(c, err)
 			return nil, false
 		}
 		defer opened.Close()
 		data, err := io.ReadAll(opened)
 		if err != nil {
-			writeError(c, err)
+			h.writeError(c, err)
 			return nil, false
 		}
 		return data, true
 	}
 	data, err := c.GetRawData()
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return nil, false
 	}
 	return data, true

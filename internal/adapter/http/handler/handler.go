@@ -36,7 +36,7 @@ func success(c *gin.Context, status int, data any) {
 func (h *Handler) Workspace(c *gin.Context) {
 	ws, err := h.serviceFor(c).Snapshot(c.Request.Context())
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, workspaceDTO(ws))
@@ -45,7 +45,7 @@ func (h *Handler) Workspace(c *gin.Context) {
 func (h *Handler) Collaborators(c *gin.Context) {
 	ws, err := h.serviceFor(c).Snapshot(c.Request.Context())
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	items := make([]collaboratorResponse, 0, len(ws.Collaborators))
@@ -58,7 +58,7 @@ func (h *Handler) Collaborators(c *gin.Context) {
 func (h *Handler) Me(c *gin.Context) {
 	value, err := h.serviceFor(c).Me(c.Request.Context(), middleware.CollaboratorID(c))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, collaboratorDTO(*value))
@@ -67,7 +67,7 @@ func (h *Handler) Me(c *gin.Context) {
 func (h *Handler) ListResources(c *gin.Context) {
 	items, err := h.serviceFor(c).Resources(c.Request.Context(), c.Query("kind"), c.Query("status"))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	out := make([]resourceResponse, 0, len(items))
@@ -80,7 +80,7 @@ func (h *Handler) ListResources(c *gin.Context) {
 func (h *Handler) GetResource(c *gin.Context) {
 	value, err := h.serviceFor(c).Resource(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, resourceDTO(*value))
@@ -149,7 +149,7 @@ func (h *Handler) ImportResources(c *gin.Context) {
 	}
 	result, err := h.serviceFor(c).ImportResources(c.Request.Context(), middleware.CollaboratorID(c), revision(c), inputs)
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	resources := make([]resourceResponse, len(result.Resources))
@@ -178,7 +178,7 @@ func (h *Handler) UpdateResource(c *gin.Context) {
 func (h *Handler) DeleteAllResources(c *gin.Context) {
 	result, err := h.serviceFor(c).DeleteAllResources(c.Request.Context(), middleware.CollaboratorID(c), revision(c))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, gin.H{"rev": result.Rev, "resource_ids": result.ResourceIDs})
@@ -187,7 +187,7 @@ func (h *Handler) DeleteAllResources(c *gin.Context) {
 func (h *Handler) DeleteResource(c *gin.Context) {
 	result, err := h.serviceFor(c).DeleteResource(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, gin.H{"rev": result.Rev, "resource_id": c.Param("id")})
@@ -308,7 +308,7 @@ func (h *Handler) DeleteField(c *gin.Context) {
 func (h *Handler) Comments(c *gin.Context) {
 	items, err := h.serviceFor(c).Comments(c.Request.Context(), c.Param("id"), c.Query("field_id"))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	out := make([]commentResponse, 0, len(items))
@@ -330,7 +330,7 @@ func (h *Handler) AddComment(c *gin.Context) {
 	}
 	result, err := h.serviceFor(c).AddComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), request.FieldID, request.Body)
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusCreated, gin.H{"rev": result.Rev, "comment": commentDTO(*result.Comment)})
@@ -339,7 +339,7 @@ func (h *Handler) AddComment(c *gin.Context) {
 func (h *Handler) DeleteComment(c *gin.Context) {
 	result, err := h.serviceFor(c).DeleteComment(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c))
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, http.StatusOK, gin.H{"rev": result.Rev, "comment_id": c.Param("id")})
@@ -352,7 +352,7 @@ func (h *Handler) Activity(c *gin.Context) {
 	}
 	items, total, err := h.serviceFor(c).Activity(c.Request.Context(), c.Query("resource_id"), page, limit)
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	out := make([]activityResponse, 0, len(items))
@@ -364,7 +364,7 @@ func (h *Handler) Activity(c *gin.Context) {
 
 func (h *Handler) writeMutation(c *gin.Context, result *usecase.MutationResult, err error, status int) {
 	if err != nil {
-		writeError(c, err)
+		h.writeError(c, err)
 		return
 	}
 	success(c, status, gin.H{"rev": result.Rev, "resource": resourceDTO(*result.Resource)})
@@ -397,9 +397,10 @@ func positiveInt(value string, fallback int) int {
 	return parsed
 }
 
-func writeError(c *gin.Context, err error) {
+func (h *Handler) writeError(c *gin.Context, err error) {
 	status, code, message := http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error"
 	var details map[string]any
+	var data any
 	var appErr *usecase.Error
 	if errors.As(err, &appErr) {
 		message, details = appErr.Message, appErr.Details
@@ -413,6 +414,11 @@ func writeError(c *gin.Context, err error) {
 		status, code = http.StatusForbidden, "FORBIDDEN"
 	case errors.Is(err, usecase.ErrRevConflict):
 		status, code = http.StatusConflict, "REV_CONFLICT"
+		if h.service != nil && middleware.WorkspaceID(c) != "" {
+			if workspace, snapshotErr := h.serviceFor(c).Snapshot(c.Request.Context()); snapshotErr == nil {
+				data = workspaceDTO(workspace)
+			}
+		}
 	}
-	c.JSON(status, gin.H{"success": false, "message": message, "data": nil, "error": gin.H{"code": code, "details": details}})
+	c.JSON(status, gin.H{"success": false, "message": message, "data": data, "error": gin.H{"code": code, "details": details}})
 }

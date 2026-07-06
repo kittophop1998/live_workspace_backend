@@ -185,8 +185,36 @@ func TestCreateEndpointUsesEditableDefaults(t *testing.T) {
 	if result.Resource.Status == nil || *result.Resource.Status != entity.EndpointStatusDraft {
 		t.Fatalf("expected default status draft, got %v", result.Resource.Status)
 	}
+	if len(result.Resource.Fields) != 0 {
+		t.Fatalf("expected endpoint to start with no fields, got %+v", result.Resource.Fields)
+	}
 	if repository.workspace.Resources[1].ID != result.Resource.ID {
 		t.Fatal("created endpoint was not persisted")
+	}
+}
+
+func TestCreateModelAndDatabaseSeedIDField(t *testing.T) {
+	for _, kind := range []entity.ResourceKind{entity.KindModel, entity.KindDatabase} {
+		t.Run(string(kind), func(t *testing.T) {
+			service, _ := newTestService()
+
+			result, err := service.CreateResource(context.Background(), "col_test", nil, CreateResourceInput{
+				Name: "New " + string(kind),
+				Kind: string(kind),
+			})
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Resource.Fields) != 1 {
+				t.Fatalf("expected one seeded field, got %+v", result.Resource.Fields)
+			}
+			field := result.Resource.Fields[0]
+			if field.Key != "id" || field.Type != "uuid" || !field.Required ||
+				field.State != entity.StateDraft || field.Change != entity.ChangeAdded {
+				t.Fatalf("unexpected seeded field: %+v", field)
+			}
+		})
 	}
 }
 

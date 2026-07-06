@@ -165,7 +165,7 @@ func (s *Service) CreateResource(ctx context.Context, actorID string, expected *
 		now := s.now()
 		resource := entity.Resource{
 			ID: "res_" + shortID(), Name: strings.TrimSpace(in.Name), Kind: entity.ResourceKind(in.Kind),
-			State: entity.StateDraft, Fields: []entity.SchemaField{{ID: "fld_" + shortID(), Key: "id", Type: "uuid", Required: true, State: entity.StateDraft, Change: entity.ChangeAdded}},
+			State: entity.StateDraft, Fields: []entity.SchemaField{},
 			UpdatedAt: now, UpdatedBy: actor.Name,
 		}
 		if in.Kind == string(entity.KindEndpoint) {
@@ -174,6 +174,11 @@ func (s *Service) CreateResource(ctx context.Context, actorID string, expected *
 			status := entity.EndpointStatusDraft
 			resource.Status = &status
 			resource.Responses = []entity.ResponseSchema{}
+		} else {
+			resource.Fields = append(resource.Fields, entity.SchemaField{
+				ID: "fld_" + shortID(), Key: "id", Type: "uuid", Required: true,
+				State: entity.StateDraft, Change: entity.ChangeAdded,
+			})
 		}
 		ws.Resources = append(ws.Resources, resource)
 		return &ws.Resources[len(ws.Resources)-1], activity(actor, "created", resource.Name, resource.ID, now), nil

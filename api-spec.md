@@ -277,6 +277,26 @@ client-side in `localStorage` (`live-workspace:api-tests`, keyed by `resource.id
 On a transport failure (DNS/refused/timeout) the endpoint still returns `200` with
 `status: 0` and a non-empty `error` so the UI can render it inline.
 
+**Server behavior (backend contract):**
+- The server issues the outbound request itself (server-to-server) — this is what
+  bypasses the browser's CORS/mixed-content restrictions. Nothing about the caller's
+  origin matters.
+- `method` / `url` / `headers` / `body` are forwarded as-is. `url` must be absolute
+  with an `http`/`https` scheme; anything else → `200` + `status: 0` + `error`.
+- **Redirects are NOT auto-followed** — a 3xx is surfaced as-is (more useful when
+  validating API behavior). Request **timeout is 20s**; on timeout the transport
+  error → `200` + `status: 0` + `error`.
+- Response `body` is a UTF-8 string capped at **2 MiB**; `truncated: true` when the
+  source was larger. `size` is the returned (capped) byte length.
+- `duration_ms` is measured on the server around the outbound call.
+- `headers` is the response headers as `{ name: [values...] }` (multi-value safe).
+- Any transport/network error (DNS/refused/timeout) is caught and returned in the
+  envelope with HTTP `200` + `status: 0` + non-empty `error` — never a 5xx for a
+  failed *target*.
+- **SSRF guard** (`Executor.AllowPrivate`): when false (prod) requests to
+  loopback/link-local/private hosts are rejected; dev defaults to true so it can
+  hit `localhost` APIs. See `backend/internal/httpexec/executor.go`.
+
 ### FlowDefinition (E2E Flow Testing — persisted)
 A workflow parsed from an uploaded **Arazzo (OpenAPI Workflows) JSON/YAML** file.
 Stored in its **own Mongo collection** (`flows`), scoped by `workspace_id` — *not*
@@ -355,7 +375,6 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | GET | `/resources` | List resources (`?kind=endpoint\|database\|model` and/or `?status=draft\|inprogress\|testing\|done` optional; `status` applies to endpoints only) |
 | GET | `/resources/{id}` | One resource (with fields) |
 | POST | `/resources` | Create a resource |
-| POST | `/resources/import` | **Bulk-create endpoints from a parsed spec** in one atomic mutation (backs the "Import API" recreate step) |
 | DELETE | `/resources` | **Delete ALL resources in the room** (clears the workspace; backs the "Import API" wipe-then-recreate flow) |
 | PATCH | `/resources/{id}` | Rename / set `method` / `path` |
 | DELETE | `/resources/{id}` | Delete a resource |
@@ -428,7 +447,6 @@ All payloads reuse the §2 models. Clients merge by `rev` (ignore `rev <= local`
 | `snapshot` | `WorkspaceSnapshot` (sent on connect) |
 | `resource.created` / `resource.updated` / `resource.deleted` | `{ "rev", "resource": Resource }` (deleted → `{ "rev", "resource_id" }`) |
 | `resource.cleared` | `{ "rev", "resource_ids": [ "res_…" ] }` (bulk delete-all; clients drop every listed id + its comments) |
-| `resource.imported` | `{ "rev", "resources": [ Resource, … ] }` (bulk import; **all resources share the one `rev`** — clients must add them in a single merge, not one-by-one) |
 | `field.created` / `field.updated` / `field.removed` | `{ "rev", "resource": Resource }` (send the whole updated resource so `state` rollup + fields stay consistent) |
 | `resource.updated` (from `PUT /resources/{id}/responses`) | `{ "rev", "resource": Resource }` — reuses the `resource.updated` frame; the resource carries the new `responses` array |
 | `comment.created` / `comment.deleted` | `{ "rev", "comment": Comment }` / `{ "rev", "comment_id" }` |
@@ -478,16 +496,12 @@ Request:
 ```
 Response `data`: the created `Resource` (`state:"draft"`).
 
-> **Seeded `id` field — behavior change (TODO in `usecase.CreateResource`).** The
-> server currently seeds a default `id` (`type:"uuid"`) field on *every* create
-> (`internal/usecase/workspace.go`). This is wrong for **endpoints**: a `GET`
-> sends query params and a `POST` sends a request body — neither wants a phantom
-> `id`. Desired contract:
+> **Seeded `id` field behavior.** A `GET` endpoint sends query params and a
+> `POST` endpoint sends a request body, so endpoints must not receive a phantom
+> seeded field:
 > - `kind:"endpoint"` → create with **no** seeded fields (empty `fields:[]`).
-> - `kind:"database"` / `kind:"model"` → keep the seeded `id`.
->
-> The client currently strips seeded fields from new/imported endpoints as a
-> workaround; remove that workaround once this lands.
+> - `kind:"database"` / `kind:"model"` → keep the seeded `id` (an id column/key
+>   is a sensible default).
 
 ### PATCH `/resources/{id}`
 Request (any subset):
@@ -517,46 +531,6 @@ without bumping or broadcasting. Emits `resource.cleared` (§4) and one
 `ActivityEvent` (`verb:"cleared"`, `target:"all resources"`).
 
 Response `data`: `{ "rev": 46, "resource_ids": [ "res_user", "res_create_order" ] }`
-
-### POST `/resources/import`
-Bulk-creates endpoints from a parsed OpenAPI/Postman spec in **one** rev-bumping
-mutation (one save, one `resource.imported` broadcast, one `ActivityEvent`
-`verb:"imported"`). Replaces the old client loop of create-then-N-field-calls,
-which fired thousands of round-trips for a large spec and dropped the rest of the
-batch on the first transient failure. The **whole** import is atomic: if any
-endpoint is invalid, nothing is persisted (`422 VALIDATION_ERROR`). Imported
-endpoints are created with **no** seeded `id` field (they mirror the spec).
-Typically preceded by `DELETE /resources` (wipe-then-recreate).
-
-Each endpoint carries its request-body `fields` (ids assigned server-side; `value`
-kept for `json` fields) and full per-status `responses` (response field `id`s come
-from the client). `method` defaults to `GET`, `path` to `/api/v1/new`.
-
-Request:
-```json
-{
-  "endpoints": [
-    {
-      "name": "getUser", "method": "GET", "path": "/users/{id}",
-      "fields": [
-        { "key": "expand", "type": "string", "required": false }
-      ],
-      "responses": [
-        {
-          "status": 200, "description": "OK",
-          "fields": [
-            { "id": "rsf_1", "key": "id", "type": "uuid", "required": true,
-              "state": "ready", "change": "added" }
-          ]
-        }
-      ]
-    },
-    { "name": "createUser", "method": "POST", "path": "/users", "fields": [], "responses": [] }
-  ]
-}
-```
-Response `data`: `{ "rev": 47, "resources": [ { "...Resource" }, { "...Resource" } ] }`
-(the created resources, in request order, each with server-assigned ids).
 
 ### POST `/resources/{id}/fields`
 Request:
@@ -619,6 +593,23 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 { "success": true, "message": "OK",
   "data": { "items": [ "...ActivityEvent" ],
             "page_info": { "page": 1, "limit": 50, "total": 128 } } }
+```
+
+### POST `/http/test`
+```json
+// request body
+{ "method": "GET", "url": "https://api.example.com/users?limit=5",
+  "headers": { "Authorization": "Bearer xyz" }, "body": "" }
+// success (target answered)
+{ "success": true, "message": "OK",
+  "data": { "status": 200, "duration_ms": 118,
+            "headers": { "Content-Type": ["application/json"] },
+            "body": "[{...}]", "size": 842, "truncated": false, "error": "" } }
+// target unreachable — still HTTP 200 (handler reports duration_ms: 0 on error)
+{ "success": true, "message": "OK",
+  "data": { "status": 0, "duration_ms": 0, "headers": {},
+            "body": "", "size": 0, "truncated": false,
+            "error": "context deadline exceeded" } }
 ```
 
 ---

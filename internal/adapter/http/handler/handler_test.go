@@ -128,3 +128,43 @@ func TestReplaceResponsesRequestDistinguishesMissingAndEmpty(t *testing.T) {
 		t.Fatalf("expected explicit empty responses, got %#v", empty.Responses)
 	}
 }
+
+func TestRevisionConflictIncludesCurrentWorkspaceSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &memRepo{ws: &entity.Workspace{
+		ID: "wsp_test", Rev: 5,
+		Collaborators: []entity.Collaborator{{ID: "col_test", Name: "Tester"}},
+		Resources: []entity.Resource{{
+			ID: "res_test", Name: "User", Kind: entity.KindModel, Fields: []entity.SchemaField{},
+		}},
+	}}
+	h := New(usecase.NewService(repo, "wsp_test", nil), nil, nil, nil, nil)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/resources/res_test", nil)
+	c.Request.Header.Set("If-Match", "4")
+	c.Set(middleware.CollaboratorKey, "col_test")
+	c.Set(middleware.WorkspaceKey, "wsp_test")
+
+	h.DeleteResource(c)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Rev         int64  `json:"rev"`
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"data"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != "REV_CONFLICT" || response.Data.Rev != 5 || response.Data.WorkspaceID != "wsp_test" {
+		t.Fatalf("unexpected conflict response: %+v", response)
+	}
+}
