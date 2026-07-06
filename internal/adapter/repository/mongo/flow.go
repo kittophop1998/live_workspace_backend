@@ -80,15 +80,15 @@ type flowDoc struct {
 }
 
 type stepResultDoc struct {
-	StepID      string         `bson:"step_id"`
-	Method      string         `bson:"method"`
-	URL         string         `bson:"url"`
-	Status      int            `bson:"status"`
-	DurationMs  int64          `bson:"duration_ms"`
-	Passed      bool           `bson:"passed"`
-	Skipped     bool           `bson:"skipped"`
-	Failures    []string       `bson:"failures"`
-	Outputs     map[string]any `bson:"outputs"`
+	StepID         string            `bson:"step_id"`
+	Method         string            `bson:"method"`
+	URL            string            `bson:"url"`
+	Status         int               `bson:"status"`
+	DurationMs     int64             `bson:"duration_ms"`
+	Passed         bool              `bson:"passed"`
+	Skipped        bool              `bson:"skipped"`
+	Failures       []string          `bson:"failures"`
+	Outputs        map[string]any    `bson:"outputs"`
 	Error          string            `bson:"error"`
 	RequestHeaders map[string]string `bson:"request_headers"`
 	RequestBody    string            `bson:"request_body"`

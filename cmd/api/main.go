@@ -61,6 +61,9 @@ func run() error {
 	if err := repository.EnsureIndexes(connectCtx); err != nil {
 		return err
 	}
+	if err := repository.MigrateLegacy(connectCtx); err != nil {
+		return err
+	}
 	flowRepository := mongorepo.NewFlowRepository(client.Database(cfg.MongoDatabase))
 	if err := flowRepository.EnsureIndexes(connectCtx); err != nil {
 		return err

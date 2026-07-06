@@ -2,6 +2,9 @@
 
 Go/Gin API backed by MongoDB for the collaboration contract in `api-spec.md`.
 
+MongoDB collections and revision consistency are documented in
+[docs/database.md](docs/database.md).
+
 ## Run locally
 
 ```bash
