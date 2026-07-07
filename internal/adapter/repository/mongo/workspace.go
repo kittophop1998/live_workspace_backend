@@ -247,9 +247,6 @@ func (r *WorkspaceRepository) Save(ctx context.Context, workspace *entity.Worksp
 		return port.ErrRevisionConflict
 	}
 
-	// Old versions are no longer reachable. Cleanup is best-effort because it
-	// must not turn an already-published save into an apparent failure.
-	_ = r.deleteOtherRevisions(ctx, workspace.ID, workspace.Rev)
 	return nil
 }
 
