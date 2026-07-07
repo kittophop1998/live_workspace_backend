@@ -1,12 +1,10 @@
 # Live Workspace — API Specification (v1)
 
-Backend: **TBD** (Go / Node / etc.). This document is the **contract** the frontend
-is built against. The frontend currently runs **fully client-side** — the shared
-document lives in `localStorage` and syncs across tabs via `BroadcastChannel`
-(`src/lib/sync.ts`). Implementing this API replaces that local layer with real
-multi-user, multi-device persistence; the wire shapes below mirror the frontend
-domain types in `src/lib/types.ts` (snake_case on the wire, camelCase in the app —
-the service layer normalizes).
+Backend: **Go / Gin / MongoDB**. This document is the **contract** the frontend
+is built against. The backend owns room-scoped persistence, mutation semantics,
+and real-time broadcasts; the wire shapes below mirror the frontend domain types
+in `src/lib/types.ts` (snake_case on the wire, camelCase in the app — the service
+layer normalizes).
 
 > **What the backend owns:** persistence of the workspace document (resources,
 > fields, comments, activity), identity/presence, and broadcasting changes.
@@ -72,8 +70,9 @@ server responds `409 REV_CONFLICT` with the current `data` snapshot so the clien
 can rebase. This mirrors the client's existing `rev`-based merge in `store.ts`.
 
 ### Pagination
-List endpoints accept `?page=1&limit=50` and return `data.items` + `data.page_info`
-(`{ "page": 1, "limit": 50, "total": 84 }`).
+`GET /activity` accepts `?page=1&limit=50` (max `limit=100`) and returns
+`data.items` + `data.page_info` (`{ "page": 1, "limit": 50, "total": 84 }`).
+Other list endpoints currently return arrays directly.
 
 ### Real-time (WebSocket) — REQUIRED for collaboration
 Replaces the current `BroadcastChannel` layer. See §4. Without it the app degrades
@@ -185,15 +184,13 @@ client-side as a set of `resource.id`s in `localStorage`
 > `Collaborator.bookmarks: string[]` or a `GET/PUT /me/bookmarks` endpoint); the
 > local store then becomes a cache/fallback.
 
-### EndpointStatus (frontend-local)
+### EndpointStatus
 A per-endpoint **workflow/progress** status shown as a dropdown pill in the endpoint
 header. It is **distinct from `Resource.state`** (the server-derived field rollup
 `draft | ready | breaking`): this tracks how far the endpoint is in the build
-pipeline. The backend `Resource` model has **no slot for it yet**, so — like
-bookmarks — it lives entirely client-side in `localStorage`
-(`live-workspace:endpoint-status`, keyed by `resource.id`) — see
-`src/lib/endpointStatus.ts`. Only meaningful for `kind:"endpoint"`; defaults to
-`draft`.
+pipeline. The backend persists it as `Resource.status` for `kind:"endpoint"` only.
+Endpoint creation defaults it to `draft`; legacy endpoint rows without a stored
+status are read back as `draft`.
 ```
 draft        // not started / spec only
 inprogress   // being implemented
@@ -201,13 +198,9 @@ testing       // implemented, under test (incl. E2E flows)
 done         // shipped / verified
 ```
 The **left explorer filters by this status** (chips: All / Draft / In Progress /
-Testing / Done) — the filter is endpoint-only (databases have no workflow status).
-While it stays frontend-local the filter runs client-side; once the backend adopts
-the field it is driven by `GET /resources?status=<value>` (§3).
-> **When the backend adopts this:** promote `status` to a first-class `Resource`
-> field (endpoints only; snake_case on the wire) — settable via
-> `PATCH /resources/{id}`, filterable via `GET /resources?status=`, normalized in
-> `src/services/workspace.service.ts` — and the local store becomes a cache/fallback.
+Testing / Done) — the filter is endpoint-only (databases/models have no workflow
+status). It is settable via `PATCH /resources/{id}` and filterable via
+`GET /resources?status=<value>` (§3).
 
 ### Comment
 Inline discussion, optionally anchored to a single field.
@@ -375,8 +368,9 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | GET | `/resources` | List resources (`?kind=endpoint\|database\|model` and/or `?status=draft\|inprogress\|testing\|done` optional; `status` applies to endpoints only) |
 | GET | `/resources/{id}` | One resource (with fields) |
 | POST | `/resources` | Create a resource |
+| POST | `/resources/import` | Bulk-create imported endpoints; body `{ "endpoints": [ ... ] }`, response `{ "rev", "resources" }` |
 | DELETE | `/resources` | **Delete ALL resources in the room** (clears the workspace; backs the "Import API" wipe-then-recreate flow) |
-| PATCH | `/resources/{id}` | Rename / set `method` / `path` |
+| PATCH | `/resources/{id}` | Rename / set `method` / `path` / endpoint `status` |
 | DELETE | `/resources/{id}` | Delete a resource |
 
 ### Fields
@@ -494,7 +488,9 @@ Request:
 ```json
 { "name": "createOrder", "kind": "endpoint", "method": "POST", "path": "/api/v1/orders" }
 ```
-Response `data`: the created `Resource` (`state:"draft"`).
+Response `data`: `{ "rev": 43, "resource": { "...Resource" } }`. Endpoint
+resources are created with `state:"draft"`, `status:"draft"`, empty `fields:[]`,
+and empty `responses:[]`.
 
 > **Seeded `id` field behavior.** A `GET` endpoint sends query params and a
 > `POST` endpoint sends a request body, so endpoints must not receive a phantom
@@ -506,7 +502,7 @@ Response `data`: the created `Resource` (`state:"draft"`).
 ### PATCH `/resources/{id}`
 Request (any subset):
 ```json
-{ "name": "createOrderV2", "path": "/api/v1/v2/orders" }
+{ "name": "createOrderV2", "path": "/api/v1/v2/orders", "status": "testing" }
 ```
 Response `data`: `{ "rev": 43, "resource": { "...Resource" } }`
 
@@ -514,6 +510,8 @@ Response `data`: `{ "rev": 43, "resource": { "...Resource" } }`
 > created endpoint is seeded with `method:"GET"`, `path:"/api/v1/new"` and the
 > client renames/repaths it via this `PATCH`. There is **no** reserved or
 > immutable path; `/api/v1/new` is just a placeholder default.
+> `status` is valid only for endpoints and must be one of `draft`, `inprogress`,
+> `testing`, or `done`.
 
 ### DELETE `/resources/{id}`
 Permanently removes a resource (endpoint / database / model) and all of its
@@ -538,7 +536,7 @@ Request:
 { "key": "couponCode", "type": "string", "required": false }
 ```
 - `state` defaults to `draft`, `change` to `added`.
-- `409 VALIDATION_ERROR` if `key` already exists on the resource.
+- `422 VALIDATION_ERROR` if `key` already exists on the resource.
 
 Response `data`: `{ "rev": 44, "resource": { "...Resource" } }` (full resource so
 the client refreshes the `state` rollup).
@@ -608,8 +606,7 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 // target unreachable — still HTTP 200 (handler reports duration_ms: 0 on error)
 { "success": true, "message": "OK",
   "data": { "status": 0, "duration_ms": 0, "headers": {},
-            "body": "", "size": 0, "truncated": false,
-            "error": "context deadline exceeded" } }
+            "body": "", "size": 0, "error": "context deadline exceeded" } }
 ```
 
 ---
@@ -621,20 +618,20 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 | Left explorer groups | `Resource.kind` (`endpoint` / `database` / `model`) |
 | Endpoint method tag + path | `Resource.method`, `Resource.path` |
 | Resource state dot / badge | `Resource.state` (server rollup) |
-| Endpoint status pill (Draft / In Progress / Testing / Done) | `EndpointStatus` (frontend-local, see §2) |
-| Explorer status filter chips (All / Draft / In Progress / Testing / Done) | `EndpointStatus` (frontend-local; backend: `GET /resources?status=`) |
+| Endpoint status pill (Draft / In Progress / Testing / Done) | `Resource.status` (endpoints only, see §2) |
+| Explorer status filter chips (All / Draft / In Progress / Testing / Done) | `Resource.status`; backend filter `GET /resources?status=` |
 | Blueprint field row | `SchemaField` (`key`, `type`, `required`, `description`) |
 | `[Draft] [Ready] [Breaking Change]` badge | `SchemaField.state` |
 | Diff line-weight / colour | `SchemaField.change` |
 | Field comment count | `Comment[]` where `resource_id` + `field_id` match |
 | "updated 2m ago by X" | `Resource.updated_at`, `updated_by` |
 | Request body tabs (Visual / JSON Schema / Example JSON / Example TypeScript) | `Resource.fields` → client-side schema tree (`schemaConvert.ts`) — **no API** |
-| Response tabs (per HTTP status) | `ResponseSchema[]` (frontend-local, see §2) |
+| Response tabs (per HTTP status) | `Resource.responses` (`ResponseSchema[]`, see §2) |
 | Explorer "Bookmarked" group (pinned top) | client-side bookmark set (frontend-local, see §2) |
 | Right · Activity tab | `ActivityEvent[]` (newest first) |
 | Right · Comments tab | `Comment[]` (filtered by selected resource / focused field) |
 | Top bar presence avatars | `Collaborator[]` + live `Presence` (online if heartbeat within TTL) |
-| Top bar "Import API" | **`DELETE /resources`** (wipe the workspace) then parses an OpenAPI/Postman spec and **`POST /resources`** one endpoint per chosen operation |
+| Top bar "Import API" | **`DELETE /resources`** (wipe the workspace) then **`POST /resources/import`** with selected endpoints |
 
 The client treats each read/WS payload as the **single source of truth**, merges
 mutations by `rev` (last-writer-wins on conflict, with `409` rebase), and never
