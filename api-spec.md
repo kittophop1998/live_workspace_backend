@@ -450,17 +450,23 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 ### API Story
 | method | path | purpose |
 |--------|------|---------|
-| POST | `/stories` | Create a story `{ "name", "steps"? }` (scoped to the room) → `Story` |
+| POST | `/stories` | First save of a story `{ "name", "steps" }` (scoped to the room) → `Story` |
 | GET | `/stories` | List saved stories for the room (newest first) |
 | GET | `/stories/{id}` | One story |
-| PATCH | `/stories/{id}` | Update `{ "name"?, "steps"? }` |
+| PATCH | `/stories/{id}` | Re-save an existing story `{ "name", "steps" }` (full document) |
 | DELETE | `/stories/{id}` | Delete a story |
 
 > Stories live in a dedicated `stories` collection and, like flows, do **not** bump
-> the workspace `rev` or emit activity events. `PATCH` is a **full replace** of each
-> field sent: `steps` is always written as the whole array (the client computes the
-> next ordering for add/move/remove and PATCHes the complete list) → last-write-wins
-> per story doc. `DELETE /stories/{id}` hard-deletes; response `data`:
+> the workspace `rev` or emit activity events.
+>
+> **Edit model = draft then save.** The client builds/edits a story entirely in a
+> local in-memory draft (add/move/remove steps, rename, notes/sections) — no
+> request per keystroke. A single **Save** flushes the WHOLE story in ONE request:
+> `POST /stories` the first time (never-persisted draft), `PATCH /stories/{id}`
+> thereafter. Both carry the complete `{ "name", "steps" }`; `steps` is always the
+> full ordered array (array order = step order). `PATCH` is therefore a **full
+> replace** → last-write-wins per story doc. Every `id` in `steps` is
+> client-generated and persisted as-is. `DELETE /stories/{id}` hard-deletes; response `data`:
 > `{ "story_id": "sty_1a2b" }`. Peers pick up story changes on their next
 > `GET /stories` (on load, or when opening the **API Story** tab); real-time WS push
 > is **optional** and not required for v1.
