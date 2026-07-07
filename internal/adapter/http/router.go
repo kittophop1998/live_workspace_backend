@@ -52,6 +52,12 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.POST("/flows/:id/run", h.RunFlow)
 		v1.GET("/flows/:id/runs", h.ListFlowRuns)
 
+		v1.POST("/stories", h.CreateStory)
+		v1.GET("/stories", h.ListStories)
+		v1.GET("/stories/:id", h.GetStory)
+		v1.PATCH("/stories/:id", h.UpdateStory)
+		v1.DELETE("/stories/:id", h.DeleteStory)
+
 		v1.GET("/stream", hub.Serve)
 	}
 	return router

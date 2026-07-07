@@ -68,15 +68,20 @@ func run() error {
 	if err := flowRepository.EnsureIndexes(connectCtx); err != nil {
 		return err
 	}
+	storyRepository := mongorepo.NewStoryRepository(client.Database(cfg.MongoDatabase))
+	if err := storyRepository.EnsureIndexes(connectCtx); err != nil {
+		return err
+	}
 	hub := realtime.NewHub(cfg.AllowedOrigins)
 	service := usecase.NewService(repository, cfg.WorkspaceID, hub)
 	roomService := usecase.NewRoomService(repository)
 	// Dev tool: allow proxying to private/localhost hosts so devs can test local APIs.
 	executor := httpexec.New(true)
 	flowService := usecase.NewFlowService(flowRepository, service, arazzo.Parser{}, executor)
+	storyService := usecase.NewStoryService(storyRepository)
 	hub.SetService(service)
 	auth := middleware.NewAuth(cfg.JWTSecret, 30*24*time.Hour)
-	apiHandler := handler.New(service, roomService, flowService, executor, auth)
+	apiHandler := handler.New(service, roomService, flowService, storyService, executor, auth)
 	router := httpadapter.NewRouter(apiHandler, auth, hub, cfg.AllowedOrigins)
 	mcpServer := mcpadapter.NewServer(service, flowService, slog.Default())
 	mcpadapter.Mount(router, cfg.MCPEnabled, cfg.MCPPath, auth, mcpServer)

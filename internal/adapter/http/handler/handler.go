@@ -14,15 +14,16 @@ import (
 )
 
 type Handler struct {
-	service     *usecase.Service
-	roomService *usecase.RoomService
-	flowService *usecase.FlowService
-	executor    *httpexec.Executor
-	auth        *middleware.Auth
+	service      *usecase.Service
+	roomService  *usecase.RoomService
+	flowService  *usecase.FlowService
+	storyService *usecase.StoryService
+	executor     *httpexec.Executor
+	auth         *middleware.Auth
 }
 
-func New(service *usecase.Service, roomService *usecase.RoomService, flowService *usecase.FlowService, executor *httpexec.Executor, auth *middleware.Auth) *Handler {
-	return &Handler{service: service, roomService: roomService, flowService: flowService, executor: executor, auth: auth}
+func New(service *usecase.Service, roomService *usecase.RoomService, flowService *usecase.FlowService, storyService *usecase.StoryService, executor *httpexec.Executor, auth *middleware.Auth) *Handler {
+	return &Handler{service: service, roomService: roomService, flowService: flowService, storyService: storyService, executor: executor, auth: auth}
 }
 
 func (h *Handler) serviceFor(c *gin.Context) *usecase.Service {

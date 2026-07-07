@@ -338,6 +338,34 @@ Supported runtime expressions: `$statusCode`, `$response.body`,
 `$steps.<stepId>.outputs.<name>`. Success criteria support `==/!=/>/>=/</<=`
 comparisons and `type: "regex"`; no criteria ⇒ a 2xx status passes.
 
+### Story (API Story — persisted)
+An ordered business flow that walks readers through the API by **pointing at
+existing endpoint Resources** — a Story never duplicates endpoint data, each
+endpoint step is just a `resource_id` pointer back to the single source of truth.
+Stored in its **own Mongo collection** (`stories`), scoped by `workspace_id` — like
+flows, *not* embedded in the rev-guarded workspace document, so authoring a Story
+never conflicts with schema edits. **Step order = array order** (persist the array
+as-is; no separate `order` field).
+```json
+{
+  "id": "sty_1a2b", "workspace_id": "123456",
+  "name": "Checkout flow",
+  "steps": [
+    { "id": "sst_9f", "type": "endpoint", "resource_id": "res_42", "text": "" },
+    { "id": "sst_a0", "type": "section",  "resource_id": "",       "text": "Payment" },
+    { "id": "sst_b1", "type": "note",     "resource_id": "",       "text": "retry on 409" }
+  ],
+  "created_at": "2026-07-07T08:00:00Z", "created_by": "Ava Chen",
+  "updated_at": "2026-07-07T08:00:00Z", "updated_by": "Ava Chen"
+}
+```
+- `type`: `endpoint` | `note` | `section`. An `endpoint` step carries `resource_id`
+  (pointer to a `Resource`; `text` is an optional annotation). `note`/`section`
+  steps carry only `text` and MUST have an empty `resource_id`.
+- A dangling `resource_id` (endpoint deleted after the step was added) is kept
+  as-is — the UI renders it as *"endpoint no longer exists"*. The backend does **not**
+  cascade-clean stories when a resource is deleted.
+
 ---
 
 ## 3. REST Endpoints
@@ -418,6 +446,24 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 > workspace `rev` or emit WebSocket/activity events. `DELETE /flows/{id}` hard-deletes
 > the definition **and cascades** to its `flow_runs`; response `data`:
 > `{ "flow_id": "flw_1a2b" }`.
+
+### API Story
+| method | path | purpose |
+|--------|------|---------|
+| POST | `/stories` | Create a story `{ "name", "steps"? }` (scoped to the room) → `Story` |
+| GET | `/stories` | List saved stories for the room (newest first) |
+| GET | `/stories/{id}` | One story |
+| PATCH | `/stories/{id}` | Update `{ "name"?, "steps"? }` |
+| DELETE | `/stories/{id}` | Delete a story |
+
+> Stories live in a dedicated `stories` collection and, like flows, do **not** bump
+> the workspace `rev` or emit activity events. `PATCH` is a **full replace** of each
+> field sent: `steps` is always written as the whole array (the client computes the
+> next ordering for add/move/remove and PATCHes the complete list) → last-write-wins
+> per story doc. `DELETE /stories/{id}` hard-deletes; response `data`:
+> `{ "story_id": "sty_1a2b" }`. Peers pick up story changes on their next
+> `GET /stories` (on load, or when opening the **API Story** tab); real-time WS push
+> is **optional** and not required for v1.
 
 ---
 

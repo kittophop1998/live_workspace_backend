@@ -36,7 +36,7 @@ func TestImportResourcesHandlerCreatesEndpoints(t *testing.T) {
 		ID: "wsp_test", Rev: 5,
 		Collaborators: []entity.Collaborator{{ID: "col_test", Name: "Tester"}},
 	}}
-	h := New(usecase.NewService(repo, "wsp_test", nil), nil, nil, nil, nil)
+	h := New(usecase.NewService(repo, "wsp_test", nil), nil, nil, nil, nil, nil)
 
 	body := `{"endpoints":[
 		{"name":"getUser","method":"get","path":"/users/{id}",
@@ -138,7 +138,7 @@ func TestRevisionConflictIncludesCurrentWorkspaceSnapshot(t *testing.T) {
 			ID: "res_test", Name: "User", Kind: entity.KindModel, Fields: []entity.SchemaField{},
 		}},
 	}}
-	h := New(usecase.NewService(repo, "wsp_test", nil), nil, nil, nil, nil)
+	h := New(usecase.NewService(repo, "wsp_test", nil), nil, nil, nil, nil, nil)
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
