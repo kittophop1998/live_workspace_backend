@@ -7,6 +7,8 @@ package httpexec
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -95,7 +97,16 @@ func (e *Executor) Exec(ctx context.Context, in Request) (Response, error) {
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
+	// The target may compress the body. Because the tester sets Accept-Encoding
+	// explicitly, Go's transport does NOT transparently decode the response, so
+	// do it here — otherwise the client sees raw gzip/deflate bytes (which the
+	// JSON envelope then mangles into U+FFFD). The original Content-Encoding /
+	// Content-Length / Vary headers stay in resp.Header for the response viewer.
+	body, err := decodedBody(resp)
+	if err != nil {
+		return Response{}, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, maxBodyBytes+1))
 	if err != nil {
 		return Response{}, err
 	}
@@ -112,6 +123,20 @@ func (e *Executor) Exec(ctx context.Context, in Request) (Response, error) {
 		BodySize:   len(raw),
 		Truncated:  truncated,
 	}, nil
+}
+
+// decodedBody returns a reader over the response body, transparently
+// decompressing the encodings the tester advertises (gzip, deflate) using the
+// standard library only. Unrecognized encodings (e.g. br) pass through as-is.
+func decodedBody(resp *http.Response) (io.Reader, error) {
+	switch strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))) {
+	case "gzip":
+		return gzip.NewReader(resp.Body)
+	case "deflate":
+		return flate.NewReader(resp.Body), nil
+	default:
+		return resp.Body, nil
+	}
 }
 
 // isPrivateHost reports whether a host resolves to a loopback/link-local/private

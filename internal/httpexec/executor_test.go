@@ -1,10 +1,13 @@
 package httpexec
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -36,6 +39,37 @@ func TestExecSuccess(t *testing.T) {
 	}
 	if resp.DurationMs < 0 {
 		t.Errorf("duration = %d", resp.DurationMs)
+	}
+}
+
+func TestExecDecodesGzip(t *testing.T) {
+	const payload = `{"message":"gzip decoded ok"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write([]byte(payload))
+		_ = gz.Close()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer server.Close()
+
+	// Set Accept-Encoding explicitly (like the tester) so Go's transport does not
+	// transparently decode — the executor must decode it itself.
+	resp, err := New(true).Exec(context.Background(), Request{
+		Method: "GET", URL: server.URL, Headers: map[string]string{"Accept-Encoding": "gzip, deflate"},
+	})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if resp.Body != payload {
+		t.Errorf("body = %q, want decoded %q", resp.Body, payload)
+	}
+	// Original encoding headers stay visible for the response viewer.
+	if v := resp.Headers["Content-Encoding"]; len(v) != 1 || v[0] != "gzip" {
+		t.Errorf("Content-Encoding header lost: %+v", resp.Headers)
 	}
 }
 
