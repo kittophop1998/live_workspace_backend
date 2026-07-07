@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kingdom_manager/backend/internal/adapter/http/middleware"
-	"kingdom_manager/backend/internal/httpexec"
+	"kingdom_manager/backend/internal/domain/port"
 	"kingdom_manager/backend/internal/usecase"
 )
 
@@ -28,7 +28,7 @@ func (h *Handler) HTTPTest(c *gin.Context) {
 	if !bind(c, &request) {
 		return
 	}
-	resp, err := h.executor.Exec(c.Request.Context(), httpexec.Request{
+	resp, err := h.executor.Exec(c.Request.Context(), port.HTTPRequest{
 		Method: request.Method, URL: request.URL, Headers: request.Headers, Body: []byte(request.Body),
 	})
 	if err != nil {
