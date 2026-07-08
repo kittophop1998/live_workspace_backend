@@ -396,8 +396,8 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | GET | `/resources` | List resources (`?kind=endpoint\|database\|model` and/or `?status=draft\|inprogress\|testing\|done` optional; `status` applies to endpoints only) |
 | GET | `/resources/{id}` | One resource (with fields) |
 | POST | `/resources` | Create a resource |
-| POST | `/resources/import` | Bulk-create imported endpoints; body `{ "endpoints": [ ... ] }`, response `{ "rev", "resources" }` |
-| DELETE | `/resources` | **Delete ALL resources in the room** (clears the workspace; backs the "Import API" wipe-then-recreate flow) |
+| POST | `/resources/import` | Atomically bulk-create imported endpoints; body `{ "endpoints": [ ... ] }`, response `{ "rev", "resources" }` |
+| DELETE | `/resources` | **Delete ALL resources in the room**; requires `X-Confirm-Delete-All: true` |
 | PATCH | `/resources/{id}` | Rename / set `method` / `path` / endpoint `status` |
 | DELETE | `/resources/{id}` | Delete a resource |
 
@@ -575,10 +575,13 @@ Response `data`: `{ "rev": 45, "resource_id": "res_create_order" }`
 
 ### DELETE `/resources`
 Wipes **every** resource in the room (and their comments) in one rev-bumping
-mutation — the "clear the workspace" primitive behind the **Import API**
-wipe-then-recreate flow. A no-op on an empty workspace returns the current `rev`
-without bumping or broadcasting. Emits `resource.cleared` (§4) and one
-`ActivityEvent` (`verb:"cleared"`, `target:"all resources"`).
+mutation. This is an explicit destructive action and must include
+`X-Confirm-Delete-All: true`; otherwise the server returns
+`422 VALIDATION_ERROR` and leaves the workspace unchanged. Spec import must use
+`POST /resources/import` directly, not a delete-then-create sequence. A no-op on
+an empty workspace returns the current `rev` without bumping or broadcasting.
+Emits `resource.cleared` (§4) and one `ActivityEvent` (`verb:"cleared"`,
+`target:"all resources"`).
 
 Response `data`: `{ "rev": 46, "resource_ids": [ "res_user", "res_create_order" ] }`
 
@@ -683,7 +686,7 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 | Right · Activity tab | `ActivityEvent[]` (newest first) |
 | Right · Comments tab | `Comment[]` (filtered by selected resource / focused field) |
 | Top bar presence avatars | `Collaborator[]` + live `Presence` (online if heartbeat within TTL) |
-| Top bar "Import API" | **`DELETE /resources`** (wipe the workspace) then **`POST /resources/import`** with selected endpoints |
+| Top bar "Import API" | **`POST /resources/import`** with selected endpoints; do not call `DELETE /resources` first |
 
 The client treats each read/WS payload as the **single source of truth**, merges
 mutations by `rev` (last-writer-wins on conflict, with `409` rebase), and never

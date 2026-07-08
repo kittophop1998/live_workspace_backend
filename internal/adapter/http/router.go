@@ -15,7 +15,7 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery(), cors.New(cors.Config{
 		AllowOrigins: origins, AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders: []string{"Authorization", "Content-Type", "If-Match"},
+		AllowHeaders: []string{"Authorization", "Content-Type", "If-Match", "X-Confirm-Delete-All"},
 	}))
 	router.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	router.POST("/api/v1/rooms", h.CreateRoom)

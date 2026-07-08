@@ -238,7 +238,7 @@ func (s *Service) DeleteResource(ctx context.Context, actorID, id string, expect
 }
 
 func (s *Service) ReplaceResponses(ctx context.Context, actorID, resourceID string, expected *int64, inputs []ResponseSchemaInput) (*MutationResult, error) {
-	responses, err := responseSchemas(inputs)
+	responses, err := responseSchemas(inputs, responseSchemaOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -263,9 +263,8 @@ type ClearResult struct {
 }
 
 // DeleteAllResources removes every resource (and its comments) in the room in a
-// single rev-bumping mutation. Used by the "Import API" flow, which wipes the
-// workspace before recreating endpoints from a spec. A no-op on an empty
-// workspace (returns the current rev without bumping or broadcasting).
+// single rev-bumping mutation. A no-op on an empty workspace returns the current
+// rev without bumping or broadcasting.
 func (s *Service) DeleteAllResources(ctx context.Context, actorID string, expected *int64) (*ClearResult, error) {
 	ws, err := s.Snapshot(ctx)
 	if err != nil {
@@ -365,7 +364,11 @@ func (s *Service) ImportResources(ctx context.Context, actorID string, expected 
 		if err != nil {
 			return nil, err
 		}
-		responses, err := responseSchemas(in.Responses)
+		responses, err := responseSchemas(in.Responses, responseSchemaOptions{
+			generateMissingFieldIDs: true,
+			defaultState:            entity.StateDraft,
+			defaultChange:           entity.ChangeAdded,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -683,7 +686,13 @@ func validateField(key, fieldType, state string) error {
 	return nil
 }
 
-func responseSchemas(inputs []ResponseSchemaInput) ([]entity.ResponseSchema, error) {
+type responseSchemaOptions struct {
+	generateMissingFieldIDs bool
+	defaultState            entity.FieldState
+	defaultChange           entity.FieldChange
+}
+
+func responseSchemas(inputs []ResponseSchemaInput, opts responseSchemaOptions) ([]entity.ResponseSchema, error) {
 	out := make([]entity.ResponseSchema, len(inputs))
 	statuses := make(map[int]struct{}, len(inputs))
 	for i, input := range inputs {
@@ -697,8 +706,20 @@ func responseSchemas(inputs []ResponseSchemaInput) ([]entity.ResponseSchema, err
 		fields := make([]entity.SchemaField, len(input.Fields))
 		keys := make(map[string]struct{}, len(input.Fields))
 		for j, field := range input.Fields {
+			id := strings.TrimSpace(field.ID)
+			if id == "" && opts.generateMissingFieldIDs {
+				id = "fld_" + shortID()
+			}
+			state := field.State
+			if state == "" && opts.defaultState != "" {
+				state = string(opts.defaultState)
+			}
+			change := field.Change
+			if change == "" && opts.defaultChange != "" {
+				change = string(opts.defaultChange)
+			}
 			key := strings.TrimSpace(field.Key)
-			if strings.TrimSpace(field.ID) == "" || key == "" || !fieldTypes[field.Type] || !validState(field.State) || !validChange(field.Change) {
+			if id == "" || key == "" || !fieldTypes[field.Type] || !validState(state) || !validChange(change) {
 				return nil, validation("invalid response field", map[string]any{"status": input.Status, "key": field.Key})
 			}
 			if _, exists := keys[key]; exists {
@@ -712,8 +733,8 @@ func responseSchemas(inputs []ResponseSchemaInput) ([]entity.ResponseSchema, err
 				return nil, validation("value must be valid JSON", map[string]any{"status": input.Status, "key": key})
 			}
 			fields[j] = entity.SchemaField{
-				ID: strings.TrimSpace(field.ID), Key: key, Type: field.Type, Required: field.Required,
-				State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change),
+				ID: id, Key: key, Type: field.Type, Required: field.Required,
+				State: entity.FieldState(state), Change: entity.FieldChange(change),
 				Description: field.Description, Value: field.Value,
 			}
 		}

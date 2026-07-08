@@ -13,6 +13,8 @@ import (
 	"kingdom_manager/backend/internal/usecase"
 )
 
+const deleteAllResourcesConfirmationHeader = "X-Confirm-Delete-All"
+
 type Handler struct {
 	service      *usecase.Service
 	roomService  *usecase.RoomService
@@ -177,6 +179,18 @@ func (h *Handler) UpdateResource(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAllResources(c *gin.Context) {
+	if c.GetHeader(deleteAllResourcesConfirmationHeader) != "true" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "bulk resource deletion requires explicit confirmation",
+			"data":    nil,
+			"error": gin.H{
+				"code":    "VALIDATION_ERROR",
+				"details": gin.H{"header": deleteAllResourcesConfirmationHeader},
+			},
+		})
+		return
+	}
 	result, err := h.serviceFor(c).DeleteAllResources(c.Request.Context(), middleware.CollaboratorID(c), revision(c))
 	if err != nil {
 		h.writeError(c, err)
