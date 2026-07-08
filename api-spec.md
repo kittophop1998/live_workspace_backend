@@ -386,6 +386,39 @@ as-is; no separate `order` field).
   as-is — the UI renders it as *"endpoint no longer exists"*. The backend does **not**
   cascade-clean stories when a resource is deleted.
 
+### Proposal (Proposal Mode — persisted)
+A Pull-Request-like review flow for an endpoint's request-body schema: `fields`
+is an independent **draft copy** of the target `Resource`'s fields (cloned at
+creation), reviewed via threaded `comments` and an append-only `timeline`
+before being merged back through the real field endpoints (`/resources/{id}/fields...`).
+The `Proposal` document itself is never the source of truth for the published
+schema — merging applies the diff through those endpoints, same as any other edit.
+Stored in its **own Mongo collection** (`proposals`), scoped by `workspace_id` —
+like Story/Flow, *not* embedded in the rev-guarded workspace document, so
+drafting a proposal never conflicts with schema edits.
+```json
+{
+  "id": "prp_9c2a", "workspace_id": "123456", "resource_id": "res_42",
+  "title": "Add phone field", "description": "Needed for SMS 2FA rollout.",
+  "author": "Ava Chen", "author_role": "backend", "status": "reviewing",
+  "fields": [ { "id": "fld_1", "key": "phone", "type": "string", "required": false, "state": "draft", "change": "added" } ],
+  "comments": [
+    { "id": "prc_1", "field_key": "phone", "author": "Bo Lin", "role": "frontend", "body": "should this be E.164?", "resolved": false, "at": "2026-07-08T09:10:00Z" }
+  ],
+  "timeline": [
+    { "id": "ptl_1", "kind": "created", "actor": "Ava Chen", "detail": "created this proposal", "at": "2026-07-08T09:00:00Z" },
+    { "id": "ptl_2", "kind": "status", "actor": "Ava Chen", "detail": "requested review", "at": "2026-07-08T09:05:00Z" }
+  ],
+  "created_at": "2026-07-08T09:00:00Z", "updated_at": "2026-07-08T09:10:00Z", "updated_by": "Bo Lin"
+}
+```
+- `status`: `draft` | `reviewing` | `approved` | `rejected` | `merged`. `author`/
+  `author_role` and every `comments[].author`/`role` and `timeline[].actor` are
+  derived server-side from the authenticated collaborator — never client-submitted.
+- `fields` reuses the `SchemaField` shape (§2 above), including nested `children`/`items`.
+- `timeline` is append-only; entries are never edited or removed, only appended
+  by the mutating endpoints below.
+
 ---
 
 ## 3. REST Endpoints
@@ -491,6 +524,33 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 > `{ "story_id": "sty_1a2b" }`. Peers pick up story changes on their next
 > `GET /stories` (on load, or when opening the **API Story** tab); real-time WS push
 > is **optional** and not required for v1.
+
+### Proposals
+| method | path | purpose |
+|--------|------|---------|
+| POST | `/proposals` | Create a proposal `{ "resource_id", "title", "description", "fields" }` (fields = draft clone of the target resource's fields) → `Proposal` |
+| GET | `/proposals` | List every proposal in the room (newest first); client filters by `resource_id` |
+| GET | `/proposals/{id}` | One proposal |
+| PATCH | `/proposals/{id}` | Update `{ "title", "description" }` |
+| DELETE | `/proposals/{id}` | Delete a proposal |
+| POST | `/proposals/{id}/status` | Change status `{ "status": "draft\|reviewing\|approved\|rejected\|merged" }`, appends a `timeline` entry |
+| POST | `/proposals/{id}/fields` | Add a single draft field `{ "key", "type", "required", "description" }` |
+| PATCH | `/proposals/{id}/fields/{field_id}` | Update a draft field (key/type/required/state/description/value) |
+| DELETE | `/proposals/{id}/fields/{field_id}` | Remove a draft field |
+| POST | `/proposals/{id}/comments` | Add a comment `{ "field_key", "body" }` (optionally anchored to a field) |
+| PATCH | `/proposals/{id}/comments/{comment_id}` | Toggle a comment's `resolved` flag |
+
+> Proposals live in a dedicated `proposals` collection and, like Story/Flow, do
+> **not** bump the workspace `rev` or emit WebSocket/activity events — peers pick
+> up changes on their next `GET /proposals` (on load, or when opening the
+> **Proposals** tab). Every mutating endpoint returns the full updated `Proposal`
+> (whole-document replace, last-write-wins). `author`/`author_role` on create and
+> `comments[].author`/`role` on comment-add are always derived server-side from
+> the authenticated collaborator, never accepted from the request body. Merging a
+> proposal is a **client-driven** operation: the UI diffs `proposal.fields`
+> against the live `Resource.fields` and applies the changes through the normal
+> field endpoints (§3 Fields), then calls `POST /proposals/{id}/status` with
+> `"merged"` — there is no dedicated merge endpoint.
 
 ---
 

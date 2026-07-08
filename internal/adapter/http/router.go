@@ -59,6 +59,18 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.PATCH("/stories/:id", h.UpdateStory)
 		v1.DELETE("/stories/:id", h.DeleteStory)
 
+		v1.POST("/proposals", h.CreateProposal)
+		v1.GET("/proposals", h.ListProposals)
+		v1.GET("/proposals/:id", h.GetProposal)
+		v1.PATCH("/proposals/:id", h.UpdateProposal)
+		v1.DELETE("/proposals/:id", h.DeleteProposal)
+		v1.POST("/proposals/:id/status", h.SetProposalStatus)
+		v1.POST("/proposals/:id/fields", h.AddProposalField)
+		v1.PATCH("/proposals/:id/fields/:field_id", h.UpdateProposalField)
+		v1.DELETE("/proposals/:id/fields/:field_id", h.RemoveProposalField)
+		v1.POST("/proposals/:id/comments", h.AddProposalComment)
+		v1.PATCH("/proposals/:id/comments/:comment_id", h.ResolveProposalComment)
+
 		v1.GET("/stream", hub.Serve)
 	}
 	return router

@@ -103,10 +103,16 @@ func buildApplication(ctx context.Context, cfg config.Config, client *mongo.Clie
 		return nil, err
 	}
 
+	proposalRepository := mongorepo.NewProposalRepository(database)
+	if err := proposalRepository.EnsureIndexes(ctx); err != nil {
+		return nil, err
+	}
+
 	hub := realtime.NewHub(cfg.AllowedOrigins)
 	workspaceService := usecase.NewService(workspaceRepository, cfg.WorkspaceID, hub)
 	roomService := usecase.NewRoomService(workspaceRepository)
 	storyService := usecase.NewStoryService(storyRepository)
+	proposalService := usecase.NewProposalService(proposalRepository)
 
 	// Dev tool: allow proxying to private/localhost hosts so devs can test local APIs.
 	executor := httpexec.New(true)
@@ -114,7 +120,7 @@ func buildApplication(ctx context.Context, cfg config.Config, client *mongo.Clie
 	hub.SetService(workspaceService)
 
 	auth := middleware.NewAuth(cfg.JWTSecret, authTokenTTL)
-	apiHandler := handler.New(workspaceService, roomService, flowService, storyService, executor, auth)
+	apiHandler := handler.New(workspaceService, roomService, flowService, storyService, proposalService, executor, auth)
 	router := httpadapter.NewRouter(apiHandler, auth, hub, cfg.AllowedOrigins)
 
 	mcpServer := mcpadapter.NewServer(workspaceService, flowService, slog.Default())
