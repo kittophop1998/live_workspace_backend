@@ -141,10 +141,7 @@ func (h *Handler) ImportResources(c *gin.Context) {
 		for j, response := range ep.Responses {
 			respFields := make([]usecase.ResponseFieldInput, len(response.Fields))
 			for k, field := range response.Fields {
-				respFields[k] = usecase.ResponseFieldInput{
-					ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
-					State: field.State, Change: field.Change, Description: field.Description, Value: field.Value,
-				}
+				respFields[k] = toSchemaFieldInput(field)
 			}
 			responses[j] = usecase.ResponseSchemaInput{Status: response.Status, Description: response.Description, Fields: respFields}
 		}
@@ -213,20 +210,65 @@ type replaceResponsesRequest struct {
 }
 
 type responseSchemaRequest struct {
-	Status      int                    `json:"status"`
-	Description *string                `json:"description"`
-	Fields      []responseFieldRequest `json:"fields"`
+	Status      int                  `json:"status"`
+	Description *string              `json:"description"`
+	Fields      []schemaFieldRequest `json:"fields"`
 }
 
-type responseFieldRequest struct {
-	ID          string  `json:"id"`
-	Key         string  `json:"key"`
-	Type        string  `json:"type"`
-	Required    bool    `json:"required"`
-	State       string  `json:"state"`
-	Change      string  `json:"change"`
-	Description *string `json:"description"`
-	Value       any     `json:"value"`
+// schemaFieldRequest is a request/response body field as submitted by a
+// client — recursive (Children/Items), shared by the response-schema
+// endpoints (import + replace) and the request-field-tree endpoint below.
+type schemaFieldRequest struct {
+	ID          string                  `json:"id"`
+	Key         string                  `json:"key"`
+	Type        string                  `json:"type"`
+	Required    bool                    `json:"required"`
+	Nullable    bool                    `json:"nullable"`
+	State       string                  `json:"state"`
+	Change      string                  `json:"change"`
+	Description *string                 `json:"description"`
+	Value       any                     `json:"value"`
+	Example     any                     `json:"example"`
+	Default     any                     `json:"default"`
+	EnumValues  []string                `json:"enum_values"`
+	Validation  *fieldValidationRequest `json:"validation"`
+	Children    []schemaFieldRequest    `json:"children"`
+	Items       *schemaFieldRequest     `json:"items"`
+}
+
+type fieldValidationRequest struct {
+	MinLength *int     `json:"min_length"`
+	MaxLength *int     `json:"max_length"`
+	Minimum   *float64 `json:"minimum"`
+	Maximum   *float64 `json:"maximum"`
+	Pattern   *string  `json:"pattern"`
+	Format    *string  `json:"format"`
+}
+
+func toSchemaFieldInput(r schemaFieldRequest) usecase.SchemaFieldInput {
+	input := usecase.SchemaFieldInput{
+		ID: r.ID, Key: r.Key, Type: r.Type, Required: r.Required, Nullable: r.Nullable,
+		State: r.State, Change: r.Change, Description: r.Description,
+		Value: r.Value, Example: r.Example, Default: r.Default, EnumValues: r.EnumValues,
+	}
+	if r.Validation != nil {
+		input.Validation = &usecase.FieldValidationInput{
+			MinLength: r.Validation.MinLength, MaxLength: r.Validation.MaxLength,
+			Minimum: r.Validation.Minimum, Maximum: r.Validation.Maximum,
+			Pattern: r.Validation.Pattern, Format: r.Validation.Format,
+		}
+	}
+	if len(r.Children) > 0 {
+		input.Children = make([]usecase.SchemaFieldInput, len(r.Children))
+		for i, child := range r.Children {
+			input.Children[i] = toSchemaFieldInput(child)
+		}
+	}
+	if r.Items != nil {
+		items := toSchemaFieldInput(*r.Items)
+		input.Items = &items
+	}
+	return input
 }
 
 func (h *Handler) ReplaceResponses(c *gin.Context) {
@@ -238,14 +280,30 @@ func (h *Handler) ReplaceResponses(c *gin.Context) {
 	for i, response := range *request.Responses {
 		fields := make([]usecase.ResponseFieldInput, len(response.Fields))
 		for j, field := range response.Fields {
-			fields[j] = usecase.ResponseFieldInput{
-				ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
-				State: field.State, Change: field.Change, Description: field.Description, Value: field.Value,
-			}
+			fields[j] = toSchemaFieldInput(field)
 		}
 		inputs[i] = usecase.ResponseSchemaInput{Status: response.Status, Description: response.Description, Fields: fields}
 	}
 	result, err := h.serviceFor(c).ReplaceResponses(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), inputs)
+	h.writeMutation(c, result, err, http.StatusOK)
+}
+
+type replaceRequestFieldsRequest struct {
+	Fields []schemaFieldRequest `json:"fields" binding:"required"`
+}
+
+// ReplaceRequestFields bulk-replaces a resource's whole request-body field
+// tree (nested objects/arrays included) — backs the Visual Builder's save.
+func (h *Handler) ReplaceRequestFields(c *gin.Context) {
+	var request replaceRequestFieldsRequest
+	if !bind(c, &request) {
+		return
+	}
+	inputs := make([]usecase.SchemaFieldInput, len(request.Fields))
+	for i, field := range request.Fields {
+		inputs[i] = toSchemaFieldInput(field)
+	}
+	result, err := h.serviceFor(c).ReplaceRequestFields(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"), revision(c), inputs)
 	h.writeMutation(c, result, err, http.StatusOK)
 }
 

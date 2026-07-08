@@ -50,15 +50,35 @@ type Collaborator struct {
 	Color string
 }
 
+type FieldValidation struct {
+	MinLength *int
+	MaxLength *int
+	Minimum   *float64
+	Maximum   *float64
+	Pattern   *string
+	Format    *string
+}
+
+// SchemaField is a request/response body field. It is recursive: `Children`
+// holds nested properties for an "object" field, `Items` holds the element
+// schema for an "array" field. Leaf (scalar) fields leave both nil/empty, so
+// documents written before nesting was added decode unchanged.
 type SchemaField struct {
 	ID          string
 	Key         string
 	Type        string
 	Required    bool
+	Nullable    bool
 	State       FieldState
 	Change      FieldChange
 	Description *string
 	Value       any
+	Example     any
+	Default     any
+	EnumValues  []string
+	Validation  *FieldValidation
+	Children    []SchemaField
+	Items       *SchemaField
 }
 
 type ResponseSchema struct {

@@ -276,7 +276,29 @@ func resourcePayload(value entity.Resource) map[string]any {
 	return out
 }
 func fieldPayload(field entity.SchemaField) map[string]any {
-	return map[string]any{"id": field.ID, "key": field.Key, "type": field.Type, "required": field.Required, "state": field.State, "change": field.Change, "description": field.Description, "value": field.Value}
+	out := map[string]any{
+		"id": field.ID, "key": field.Key, "type": field.Type, "required": field.Required, "nullable": field.Nullable,
+		"state": field.State, "change": field.Change, "description": field.Description,
+		"value": field.Value, "example": field.Example, "default": field.Default, "enum_values": field.EnumValues,
+	}
+	if field.Validation != nil {
+		out["validation"] = map[string]any{
+			"min_length": field.Validation.MinLength, "max_length": field.Validation.MaxLength,
+			"minimum": field.Validation.Minimum, "maximum": field.Validation.Maximum,
+			"pattern": field.Validation.Pattern, "format": field.Validation.Format,
+		}
+	}
+	if len(field.Children) > 0 {
+		children := make([]any, len(field.Children))
+		for i, child := range field.Children {
+			children[i] = fieldPayload(child)
+		}
+		out["children"] = children
+	}
+	if field.Items != nil {
+		out["items"] = fieldPayload(*field.Items)
+	}
+	return out
 }
 func commentPayload(value entity.Comment) map[string]any {
 	return map[string]any{"id": value.ID, "resource_id": value.ResourceID, "field_id": value.FieldID, "author": value.Author, "role": value.Role, "body": value.Body, "at": value.At}

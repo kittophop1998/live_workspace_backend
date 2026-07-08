@@ -33,6 +33,7 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.PATCH("/resources/:id", h.UpdateResource)
 		v1.DELETE("/resources/:id", h.DeleteResource)
 		v1.PUT("/resources/:id/responses", h.ReplaceResponses)
+		v1.PUT("/resources/:id/request-fields", h.ReplaceRequestFields)
 		v1.POST("/resources/:id/fields", h.AddField)
 		v1.PATCH("/resources/:id/fields/:field_id", h.UpdateField)
 		v1.DELETE("/resources/:id/fields/:field_id", h.DeleteField)

@@ -16,8 +16,9 @@ import (
 )
 
 var fieldTypes = map[string]bool{
-	"string": true, "number": true, "boolean": true, "uuid": true,
+	"string": true, "number": true, "integer": true, "boolean": true, "uuid": true,
 	"timestamp": true, "json": true, "string[]": true, "number[]": true, "enum": true,
+	"object": true, "array": true, "null": true,
 }
 
 type Event struct {
@@ -85,16 +86,40 @@ type UpdateFieldInput struct {
 	Value            *any
 }
 
-type ResponseFieldInput struct {
+type FieldValidationInput struct {
+	MinLength *int
+	MaxLength *int
+	Minimum   *float64
+	Maximum   *float64
+	Pattern   *string
+	Format    *string
+}
+
+// SchemaFieldInput is a request/response body field as submitted by a client.
+// Recursive: `Children` for an "object" field's properties, `Items` for an
+// "array" field's element schema. IDs are always client-generated (the
+// frontend's schema tree assigns ids), never server-assigned here.
+type SchemaFieldInput struct {
 	ID          string
 	Key         string
 	Type        string
 	Required    bool
+	Nullable    bool
 	State       string
 	Change      string
 	Description *string
 	Value       any
+	Example     any
+	Default     any
+	EnumValues  []string
+	Validation  *FieldValidationInput
+	Children    []SchemaFieldInput
+	Items       *SchemaFieldInput
 }
+
+// ResponseFieldInput is an alias kept for call-site compatibility (handler.go
+// builds response fields under this name); it is a full SchemaFieldInput.
+type ResponseFieldInput = SchemaFieldInput
 
 type ResponseSchemaInput struct {
 	Status      int
@@ -253,6 +278,27 @@ func (s *Service) ReplaceResponses(ctx context.Context, actorID, resourceID stri
 		resource.Responses = responses
 		resource.UpdatedAt, resource.UpdatedBy = s.now(), actor.Name
 		return resource, activity(actor, "edited", "responses", resourceID, resource.UpdatedAt), nil
+	})
+}
+
+// ReplaceRequestFields bulk-replaces a resource's whole request-body field
+// tree in one mutation, mirroring ReplaceResponses. Backs the Visual
+// Builder's write-through save (nested objects/arrays, unlike AddField/
+// UpdateField/DeleteField which only ever touch a single top-level field).
+func (s *Service) ReplaceRequestFields(ctx context.Context, actorID, resourceID string, expected *int64, inputs []SchemaFieldInput) (*MutationResult, error) {
+	fields, err := buildFieldTree(inputs, fieldTreeOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return s.mutateResource(ctx, actorID, expected, "resource.updated", func(ws *entity.Workspace, actor entity.Collaborator) (*entity.Resource, entity.ActivityEvent, error) {
+		resource, _ := findResource(ws, resourceID)
+		if resource == nil {
+			return nil, entity.ActivityEvent{}, notFound("resource", resourceID)
+		}
+		resource.Fields = fields
+		resource.RollupState()
+		resource.UpdatedAt, resource.UpdatedBy = s.now(), actor.Name
+		return resource, activity(actor, "edited", "fields", resourceID, resource.UpdatedAt), nil
 	})
 }
 
@@ -703,42 +749,87 @@ func responseSchemas(inputs []ResponseSchemaInput, opts responseSchemaOptions) (
 			return nil, validation("duplicate response status", map[string]any{"status": input.Status})
 		}
 		statuses[input.Status] = struct{}{}
-		fields := make([]entity.SchemaField, len(input.Fields))
-		keys := make(map[string]struct{}, len(input.Fields))
-		for j, field := range input.Fields {
-			id := strings.TrimSpace(field.ID)
-			if id == "" && opts.generateMissingFieldIDs {
-				id = "fld_" + shortID()
-			}
-			state := field.State
-			if state == "" && opts.defaultState != "" {
-				state = string(opts.defaultState)
-			}
-			change := field.Change
-			if change == "" && opts.defaultChange != "" {
-				change = string(opts.defaultChange)
-			}
-			key := strings.TrimSpace(field.Key)
-			if id == "" || key == "" || !fieldTypes[field.Type] || !validState(state) || !validChange(change) {
-				return nil, validation("invalid response field", map[string]any{"status": input.Status, "key": field.Key})
-			}
-			if _, exists := keys[key]; exists {
-				return nil, validation("duplicate response field key", map[string]any{"status": input.Status, "key": key})
-			}
-			keys[key] = struct{}{}
-			if field.Type != "json" && field.Value != nil {
-				return nil, validation("value is only valid for json fields", map[string]any{"status": input.Status, "key": key})
-			}
-			if _, err := json.Marshal(field.Value); err != nil {
-				return nil, validation("value must be valid JSON", map[string]any{"status": input.Status, "key": key})
-			}
-			fields[j] = entity.SchemaField{
-				ID: id, Key: key, Type: field.Type, Required: field.Required,
-				State: entity.FieldState(state), Change: entity.FieldChange(change),
-				Description: field.Description, Value: field.Value,
-			}
+		fields, err := buildFieldTree(input.Fields, fieldTreeOptions{
+			generateMissingFieldIDs: opts.generateMissingFieldIDs,
+			defaultState:            opts.defaultState,
+			defaultChange:           opts.defaultChange,
+		})
+		if err != nil {
+			return nil, err
 		}
 		out[i] = entity.ResponseSchema{Status: input.Status, Description: input.Description, Fields: fields}
+	}
+	return out, nil
+}
+
+type fieldTreeOptions struct {
+	generateMissingFieldIDs bool
+	defaultState            entity.FieldState
+	defaultChange           entity.FieldChange
+}
+
+// buildFieldTree validates and converts a client-submitted field tree into
+// entity.SchemaField, recursing into Children/Items. Keys must be unique
+// among siblings only (not globally), so nested objects may reuse key names
+// used elsewhere in the tree.
+func buildFieldTree(inputs []SchemaFieldInput, opts fieldTreeOptions) ([]entity.SchemaField, error) {
+	out := make([]entity.SchemaField, len(inputs))
+	keys := make(map[string]struct{}, len(inputs))
+	for i, in := range inputs {
+		id := strings.TrimSpace(in.ID)
+		if id == "" && opts.generateMissingFieldIDs {
+			id = "fld_" + shortID()
+		}
+		state := in.State
+		if state == "" && opts.defaultState != "" {
+			state = string(opts.defaultState)
+		}
+		change := in.Change
+		if change == "" && opts.defaultChange != "" {
+			change = string(opts.defaultChange)
+		}
+		key := strings.TrimSpace(in.Key)
+		if id == "" || key == "" || !fieldTypes[in.Type] || !validState(state) || !validChange(change) {
+			return nil, validation("invalid field", map[string]any{"key": in.Key, "type": in.Type})
+		}
+		if _, exists := keys[key]; exists {
+			return nil, validation("duplicate field key", map[string]any{"key": key})
+		}
+		keys[key] = struct{}{}
+		if in.Type != "json" && in.Value != nil {
+			return nil, validation("value is only valid for json fields", map[string]any{"key": key})
+		}
+		if _, err := json.Marshal(in.Value); err != nil {
+			return nil, validation("value must be valid JSON", map[string]any{"key": key})
+		}
+		field := entity.SchemaField{
+			ID: id, Key: key, Type: in.Type, Required: in.Required, Nullable: in.Nullable,
+			State: entity.FieldState(state), Change: entity.FieldChange(change),
+			Description: in.Description, Value: in.Value, Example: in.Example, Default: in.Default,
+			EnumValues: in.EnumValues,
+		}
+		if in.Validation != nil {
+			field.Validation = &entity.FieldValidation{
+				MinLength: in.Validation.MinLength, MaxLength: in.Validation.MaxLength,
+				Minimum: in.Validation.Minimum, Maximum: in.Validation.Maximum,
+				Pattern: in.Validation.Pattern, Format: in.Validation.Format,
+			}
+		}
+		if len(in.Children) > 0 {
+			children, err := buildFieldTree(in.Children, opts)
+			if err != nil {
+				return nil, err
+			}
+			field.Children = children
+		}
+		if in.Items != nil {
+			items, err := buildFieldTree([]SchemaFieldInput{*in.Items}, opts)
+			if err != nil {
+				return nil, err
+			}
+			field.Items = &items[0]
+		}
+		out[i] = field
 	}
 	return out, nil
 }

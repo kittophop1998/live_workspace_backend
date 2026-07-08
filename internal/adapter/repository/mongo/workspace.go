@@ -69,15 +69,31 @@ type collaboratorDocument struct {
 	Color            string `bson:"color"`
 }
 
+type fieldValidationDocument struct {
+	MinLength *int     `bson:"min_length,omitempty"`
+	MaxLength *int     `bson:"max_length,omitempty"`
+	Minimum   *float64 `bson:"minimum,omitempty"`
+	Maximum   *float64 `bson:"maximum,omitempty"`
+	Pattern   *string  `bson:"pattern,omitempty"`
+	Format    *string  `bson:"format,omitempty"`
+}
+
 type fieldDocument struct {
-	ID          string  `bson:"id"`
-	Key         string  `bson:"key"`
-	Type        string  `bson:"type"`
-	State       string  `bson:"state"`
-	Change      string  `bson:"change"`
-	Required    bool    `bson:"required"`
-	Description *string `bson:"description,omitempty"`
-	Value       any     `bson:"value,omitempty"`
+	ID          string                   `bson:"id"`
+	Key         string                   `bson:"key"`
+	Type        string                   `bson:"type"`
+	State       string                   `bson:"state"`
+	Change      string                   `bson:"change"`
+	Required    bool                     `bson:"required"`
+	Nullable    bool                     `bson:"nullable,omitempty"`
+	Description *string                  `bson:"description,omitempty"`
+	Value       any                      `bson:"value,omitempty"`
+	Example     any                      `bson:"example,omitempty"`
+	Default     any                      `bson:"default,omitempty"`
+	EnumValues  []string                 `bson:"enum_values,omitempty"`
+	Validation  *fieldValidationDocument `bson:"validation,omitempty"`
+	Children    []fieldDocument          `bson:"children,omitempty"`
+	Items       *fieldDocument           `bson:"items,omitempty"`
 }
 
 type responseSchemaDocument struct {
@@ -615,19 +631,58 @@ func legacyFieldEntity(field legacyFieldDocument) entity.SchemaField {
 }
 
 func toFieldDocument(field entity.SchemaField) fieldDocument {
-	return fieldDocument{
-		ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
+	out := fieldDocument{
+		ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, Nullable: field.Nullable,
 		State: string(field.State), Change: string(field.Change),
-		Description: field.Description, Value: field.Value,
+		Description: field.Description, Value: field.Value, Example: field.Example, Default: field.Default,
+		EnumValues: field.EnumValues,
 	}
+	if field.Validation != nil {
+		out.Validation = &fieldValidationDocument{
+			MinLength: field.Validation.MinLength, MaxLength: field.Validation.MaxLength,
+			Minimum: field.Validation.Minimum, Maximum: field.Validation.Maximum,
+			Pattern: field.Validation.Pattern, Format: field.Validation.Format,
+		}
+	}
+	if len(field.Children) > 0 {
+		out.Children = make([]fieldDocument, len(field.Children))
+		for i, child := range field.Children {
+			out.Children[i] = toFieldDocument(child)
+		}
+	}
+	if field.Items != nil {
+		items := toFieldDocument(*field.Items)
+		out.Items = &items
+	}
+	return out
 }
 
 func toFieldEntity(field fieldDocument) entity.SchemaField {
-	return entity.SchemaField{
-		ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required,
+	out := entity.SchemaField{
+		ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, Nullable: field.Nullable,
 		State: entity.FieldState(field.State), Change: entity.FieldChange(field.Change),
 		Description: field.Description, Value: normalizeBSONValue(field.Value),
+		Example: normalizeBSONValue(field.Example), Default: normalizeBSONValue(field.Default),
+		EnumValues: field.EnumValues,
 	}
+	if field.Validation != nil {
+		out.Validation = &entity.FieldValidation{
+			MinLength: field.Validation.MinLength, MaxLength: field.Validation.MaxLength,
+			Minimum: field.Validation.Minimum, Maximum: field.Validation.Maximum,
+			Pattern: field.Validation.Pattern, Format: field.Validation.Format,
+		}
+	}
+	if len(field.Children) > 0 {
+		out.Children = make([]entity.SchemaField, len(field.Children))
+		for i, child := range field.Children {
+			out.Children[i] = toFieldEntity(child)
+		}
+	}
+	if field.Items != nil {
+		items := toFieldEntity(*field.Items)
+		out.Items = &items
+	}
+	return out
 }
 
 func normalizeBSONValue(value any) any {

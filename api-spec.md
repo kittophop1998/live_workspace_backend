@@ -93,16 +93,28 @@ to request/response (no live presence, manual refetch).
 ```
 
 ### SchemaField
+Recursive: `children` holds nested properties for a `type: "object"` field,
+`items` holds the element schema for a `type: "array"` field. Leaf (scalar)
+fields leave both out. Written by `POST/PATCH/DELETE /resources/{id}/fields[/{field_id}]`
+(flat, top-level only) or, for the full nested tree, `PUT /resources/{id}/request-fields`
+and `PUT /resources/{id}/responses` (§3).
 ```json
 {
   "id": "fld_email",
   "key": "email",
   "type": "string",          // see Field Types
   "required": true,
+  "nullable": false,         // optional, default false
   "state": "ready",          // draft | ready | breaking
   "change": "stable",        // stable | added | modified | removed
   "description": "Primary login email", // optional, may be omitted/null
-  "value": null              // optional; only for type "json" — nested JSON shape/sample
+  "value": null,             // optional; legacy — only for type "json"
+  "example": null,           // optional sample value
+  "default": null,           // optional default value
+  "enum_values": null,       // optional; for type "enum"
+  "validation": null,        // optional { min_length, max_length, minimum, maximum, pattern, format }
+  "children": null,          // optional []SchemaField; for type "object"
+  "items": null              // optional SchemaField; for type "array"
 }
 ```
 
@@ -111,13 +123,21 @@ to request/response (no live presence, manual refetch).
 |------|-----------|------------------|
 | `string` | `string` | `"sample_<key>"` |
 | `number` | `number` | `0` |
+| `integer` | `number` | `0` |
 | `boolean` | `boolean` | `false` |
 | `uuid` | `string` | `"0000...-...0000"` |
 | `timestamp` | `string` | ISO-8601 |
-| `json` | inferred from `value` (else `Record<string, unknown>`) | `value` (else `{}`) |
-| `string[]` | `string[]` | `["sample"]` |
-| `number[]` | `number[]` | `[0]` |
-| `enum` | `string` | first token of `description` |
+| `object` | nested type from `children` | built from `children` |
+| `array` | nested type from `items` `[]` | `[<items sample>]` |
+| `enum` | `string` | first entry of `enum_values` |
+| `null` | `null` | `null` |
+| `json` *(legacy)* | inferred from `value` (else `Record<string, unknown>`) | `value` (else `{}`) |
+| `string[]` *(legacy)* | `string[]` | `["sample"]` |
+| `number[]` *(legacy)* | `number[]` | `[0]` |
+
+`json`/`string[]`/`number[]` are accepted for backward compatibility with
+fields saved before nesting existed; new saves use `object`/`array` with
+`children`/`items` instead.
 
 **State** (`state`) — `draft` (work in progress) · `ready` (agreed/stable) ·
 `breaking` (a change that breaks existing clients). Drives the `[Draft] [Ready]
@@ -404,14 +424,15 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 ### Fields
 | method | path | purpose |
 |--------|------|---------|
-| POST | `/resources/{id}/fields` | Add a field |
-| PATCH | `/resources/{id}/fields/{field_id}` | Update key/type/required/state/description |
-| DELETE | `/resources/{id}/fields/{field_id}` | Remove a field (see soft-delete rule) |
+| POST | `/resources/{id}/fields` | Add a single top-level field |
+| PATCH | `/resources/{id}/fields/{field_id}` | Update key/type/required/state/description on a single top-level field |
+| DELETE | `/resources/{id}/fields/{field_id}` | Remove a single top-level field (see soft-delete rule) |
+| PUT | `/resources/{id}/request-fields` | Replace the resource's whole request-body field tree (nested `children`/`items` included); body `{ "fields": [ ...SchemaField ] }`. Backs the Visual Builder's save — see §6. |
 
 ### Response schemas
 | method | path | purpose |
 |--------|------|---------|
-| PUT | `/resources/{id}/responses` | Replace the endpoint's per-status response schemas (whole `ResponseSchema[]`); body `{ "responses": [ ...ResponseSchema ] }` |
+| PUT | `/resources/{id}/responses` | Replace the endpoint's per-status response schemas (whole `ResponseSchema[]`, fields may be nested); body `{ "responses": [ ...ResponseSchema ] }` |
 
 ### Comments
 | method | path | purpose |
@@ -680,8 +701,8 @@ Response `data`: `{ "rev", "comment": { "...Comment" } }`
 | Diff line-weight / colour | `SchemaField.change` |
 | Field comment count | `Comment[]` where `resource_id` + `field_id` match |
 | "updated 2m ago by X" | `Resource.updated_at`, `updated_by` |
-| Request body tabs (Visual / JSON Schema / Example JSON / Example TypeScript) | `Resource.fields` → client-side schema tree (`schemaConvert.ts`) — **no API** |
-| Response tabs (per HTTP status) | `Resource.responses` (`ResponseSchema[]`, see §2) |
+| Request body tabs (Visual / JSON Schema / Example JSON / Example TypeScript) | `Resource.fields` (nested), synced via `PUT /resources/{id}/request-fields` (write-through debounced save, `schemaTreeSync.ts`) |
+| Response tabs (per HTTP status) | `Resource.responses` (`ResponseSchema[]`, nested fields, see §2), synced via `PUT /resources/{id}/responses` |
 | Explorer "Bookmarked" group (pinned top) | client-side bookmark set (frontend-local, see §2) |
 | Right · Activity tab | `ActivityEvent[]` (newest first) |
 | Right · Comments tab | `Comment[]` (filtered by selected resource / focused field) |

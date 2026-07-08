@@ -38,15 +38,30 @@ type collaboratorResponse struct {
 	Role  string `json:"role"`
 	Color string `json:"color"`
 }
+type fieldValidationResponse struct {
+	MinLength *int     `json:"min_length,omitempty"`
+	MaxLength *int     `json:"max_length,omitempty"`
+	Minimum   *float64 `json:"minimum,omitempty"`
+	Maximum   *float64 `json:"maximum,omitempty"`
+	Pattern   *string  `json:"pattern,omitempty"`
+	Format    *string  `json:"format,omitempty"`
+}
 type fieldResponse struct {
-	ID          string  `json:"id"`
-	Key         string  `json:"key"`
-	Type        string  `json:"type"`
-	Required    bool    `json:"required"`
-	State       string  `json:"state"`
-	Change      string  `json:"change"`
-	Description *string `json:"description,omitempty"`
-	Value       any     `json:"value,omitempty"`
+	ID          string                   `json:"id"`
+	Key         string                   `json:"key"`
+	Type        string                   `json:"type"`
+	Required    bool                     `json:"required"`
+	Nullable    bool                     `json:"nullable,omitempty"`
+	State       string                   `json:"state"`
+	Change      string                   `json:"change"`
+	Description *string                  `json:"description,omitempty"`
+	Value       any                      `json:"value,omitempty"`
+	Example     any                      `json:"example,omitempty"`
+	Default     any                      `json:"default,omitempty"`
+	EnumValues  []string                 `json:"enum_values,omitempty"`
+	Validation  *fieldValidationResponse `json:"validation,omitempty"`
+	Children    []fieldResponse          `json:"children,omitempty"`
+	Items       *fieldResponse           `json:"items,omitempty"`
 }
 type responseSchemaResponse struct {
 	Status      int             `json:"status"`
@@ -111,7 +126,29 @@ func resourceDTO(value entity.Resource) resourceResponse {
 	return out
 }
 func fieldDTO(field entity.SchemaField) fieldResponse {
-	return fieldResponse{ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, State: string(field.State), Change: string(field.Change), Description: field.Description, Value: field.Value}
+	out := fieldResponse{
+		ID: field.ID, Key: field.Key, Type: field.Type, Required: field.Required, Nullable: field.Nullable,
+		State: string(field.State), Change: string(field.Change), Description: field.Description,
+		Value: field.Value, Example: field.Example, Default: field.Default, EnumValues: field.EnumValues,
+	}
+	if field.Validation != nil {
+		out.Validation = &fieldValidationResponse{
+			MinLength: field.Validation.MinLength, MaxLength: field.Validation.MaxLength,
+			Minimum: field.Validation.Minimum, Maximum: field.Validation.Maximum,
+			Pattern: field.Validation.Pattern, Format: field.Validation.Format,
+		}
+	}
+	if len(field.Children) > 0 {
+		out.Children = make([]fieldResponse, len(field.Children))
+		for i, child := range field.Children {
+			out.Children[i] = fieldDTO(child)
+		}
+	}
+	if field.Items != nil {
+		items := fieldDTO(*field.Items)
+		out.Items = &items
+	}
+	return out
 }
 func commentDTO(value entity.Comment) commentResponse {
 	return commentResponse{ID: value.ID, ResourceID: value.ResourceID, FieldID: value.FieldID, Author: value.Author, Role: string(value.Role), Body: value.Body, At: value.At}
