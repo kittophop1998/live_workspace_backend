@@ -39,7 +39,7 @@ func TestImportResourcesDefaultsResponseFieldMetadata(t *testing.T) {
 			Role: entity.RoleBackend,
 		}},
 	}}
-	service := NewService(repo, "room_1", nil)
+	service := NewService(repo, nil, "room_1", nil)
 	now := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
 
@@ -93,7 +93,7 @@ func TestDeleteFieldHardDeletesExistingField(t *testing.T) {
 			},
 		}},
 	}}
-	service := NewService(repo, "room_1", nil)
+	service := NewService(repo, nil, "room_1", nil)
 	now := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
 

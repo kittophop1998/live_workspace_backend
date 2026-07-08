@@ -42,6 +42,10 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.DELETE("/comments/:id", h.DeleteComment)
 		v1.GET("/activity", h.Activity)
 
+		// Project-wide team chat (append-only; broadcast as `chat.created`).
+		v1.GET("/chat", h.ChatMessages)
+		v1.POST("/chat", h.SendChatMessage)
+
 		// API testing (single-request proxy) + E2E flow testing.
 		v1.POST("/http/test", h.HTTPTest)
 		v1.POST("/flows/parse", h.ParseFlow)

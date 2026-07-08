@@ -33,17 +33,18 @@ type Publisher interface {
 
 type Service struct {
 	repo        port.WorkspaceRepository
+	chat        port.ChatRepository
 	workspaceID string
 	publisher   Publisher
 	now         func() time.Time
 }
 
-func NewService(repo port.WorkspaceRepository, workspaceID string, publisher Publisher) *Service {
-	return &Service{repo: repo, workspaceID: workspaceID, publisher: publisher, now: func() time.Time { return time.Now().UTC() }}
+func NewService(repo port.WorkspaceRepository, chat port.ChatRepository, workspaceID string, publisher Publisher) *Service {
+	return &Service{repo: repo, chat: chat, workspaceID: workspaceID, publisher: publisher, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *Service) ForWorkspace(workspaceID string) *Service {
-	return &Service{repo: s.repo, workspaceID: workspaceID, publisher: s.publisher, now: s.now}
+	return &Service{repo: s.repo, chat: s.chat, workspaceID: workspaceID, publisher: s.publisher, now: s.now}
 }
 
 func (s *Service) Snapshot(ctx context.Context) (*entity.Workspace, error) {
@@ -615,8 +616,7 @@ func (s *Service) AddComment(ctx context.Context, actorID, resourceID string, ex
 	if strings.TrimSpace(body) == "" {
 		return nil, validation("comment body is required", nil)
 	}
-	var result *entity.Comment
-	mutation, err := s.mutateResource(ctx, actorID, expected, "comment.created", func(ws *entity.Workspace, actor entity.Collaborator) (*entity.Resource, entity.ActivityEvent, error) {
+	return s.mutateWorkspace(ctx, actorID, expected, "comment.created", func(ws *entity.Workspace, actor entity.Collaborator) (*MutationResult, entity.ActivityEvent, error) {
 		resource, _ := findResource(ws, resourceID)
 		if resource == nil {
 			return nil, entity.ActivityEvent{}, notFound("resource", resourceID)
@@ -626,19 +626,12 @@ func (s *Service) AddComment(ctx context.Context, actorID, resourceID string, ex
 		}
 		comment := entity.Comment{ID: "cmt_" + shortID(), ResourceID: resourceID, FieldID: fieldID, AuthorID: actor.ID, Author: actor.Name, Role: actor.Role, Body: strings.TrimSpace(body), At: s.now()}
 		ws.Comments = append(ws.Comments, comment)
-		result = &ws.Comments[len(ws.Comments)-1]
-		return resource, activity(actor, "commented on", resource.Name, resourceID, comment.At), nil
+		return &MutationResult{Comment: &comment}, activity(actor, "commented on", resource.Name, resourceID, comment.At), nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	mutation.Resource, mutation.Comment = nil, result
-	return mutation, nil
 }
 
 func (s *Service) DeleteComment(ctx context.Context, actorID, commentID string, expected *int64) (*MutationResult, error) {
-	var deleted *entity.Comment
-	result, err := s.mutateResource(ctx, actorID, expected, "comment.deleted", func(ws *entity.Workspace, actor entity.Collaborator) (*entity.Resource, entity.ActivityEvent, error) {
+	return s.mutateWorkspace(ctx, actorID, expected, "comment.deleted", func(ws *entity.Workspace, actor entity.Collaborator) (*MutationResult, entity.ActivityEvent, error) {
 		for i := range ws.Comments {
 			if ws.Comments[i].ID != commentID {
 				continue
@@ -647,18 +640,56 @@ func (s *Service) DeleteComment(ctx context.Context, actorID, commentID string, 
 				return nil, entity.ActivityEvent{}, &Error{Kind: ErrForbidden, Message: "only the comment author may delete it"}
 			}
 			value := ws.Comments[i]
-			deleted = &value
 			ws.Comments = append(ws.Comments[:i], ws.Comments[i+1:]...)
-			resource, _ := findResource(ws, value.ResourceID)
-			return resource, activity(actor, "removed", "comment", value.ResourceID, s.now()), nil
+			return &MutationResult{Comment: &value}, activity(actor, "removed", "comment", value.ResourceID, s.now()), nil
 		}
 		return nil, entity.ActivityEvent{}, notFound("comment", commentID)
 	})
+}
+
+// chatHistoryLimit caps how many messages a snapshot / GET /chat returns; older
+// messages stay in storage but are not replayed to clients.
+const chatHistoryLimit = 200
+
+const chatBodyMaxLen = 2000
+
+func (s *Service) ChatMessages(ctx context.Context) ([]entity.ChatMessage, error) {
+	if s.chat == nil {
+		return []entity.ChatMessage{}, nil
+	}
+	return s.chat.List(ctx, s.workspaceID, chatHistoryLimit)
+}
+
+// SendChatMessage appends to the project-wide chat and broadcasts it. Chat is
+// append-only and lives outside the workspace aggregate, so it does not bump
+// Rev and cannot hit a revision conflict.
+func (s *Service) SendChatMessage(ctx context.Context, actorID, body string) (*entity.ChatMessage, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, validation("message body is required", nil)
+	}
+	if len(body) > chatBodyMaxLen {
+		return nil, validation("message is too long", map[string]any{"max_length": chatBodyMaxLen})
+	}
+	if s.chat == nil {
+		return nil, fmt.Errorf("chat repository is not configured")
+	}
+	ws, err := s.Snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	result.Resource, result.Comment = nil, deleted
-	return result, nil
+	actor, ok := collaborator(ws, actorID)
+	if !ok {
+		return nil, notFound("collaborator", actorID)
+	}
+	message := entity.ChatMessage{ID: "msg_" + shortID(), AuthorID: actor.ID, Author: actor.Name, Role: actor.Role, Body: body, At: s.now()}
+	if err := s.chat.Append(ctx, s.workspaceID, message); err != nil {
+		return nil, fmt.Errorf("append chat message: %w", err)
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(Event{Type: "chat.created", Payload: message, WorkspaceID: s.workspaceID})
+	}
+	return &message, nil
 }
 
 func (s *Service) Activity(ctx context.Context, resourceID string, page, limit int) ([]entity.ActivityEvent, int, error) {
@@ -683,6 +714,19 @@ func (s *Service) Activity(ctx context.Context, resourceID string, page, limit i
 }
 
 func (s *Service) mutateResource(ctx context.Context, actorID string, expected *int64, eventType string, fn func(*entity.Workspace, entity.Collaborator) (*entity.Resource, entity.ActivityEvent, error)) (*MutationResult, error) {
+	return s.mutateWorkspace(ctx, actorID, expected, eventType, func(ws *entity.Workspace, actor entity.Collaborator) (*MutationResult, entity.ActivityEvent, error) {
+		resource, event, err := fn(ws, actor)
+		if err != nil {
+			return nil, entity.ActivityEvent{}, err
+		}
+		return &MutationResult{Resource: resource}, event, nil
+	})
+}
+
+// mutateWorkspace publishes the exact MutationResult fn built, so a mutation
+// whose payload is not a resource (comments) broadcasts its real data instead
+// of a half-filled result patched up after the event already went out.
+func (s *Service) mutateWorkspace(ctx context.Context, actorID string, expected *int64, eventType string, fn func(*entity.Workspace, entity.Collaborator) (*MutationResult, entity.ActivityEvent, error)) (*MutationResult, error) {
 	ws, err := s.Snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -695,7 +739,7 @@ func (s *Service) mutateResource(ctx context.Context, actorID string, expected *
 		return nil, notFound("collaborator", actorID)
 	}
 	oldRev := ws.Rev
-	resource, event, err := fn(ws, actor)
+	result, event, err := fn(ws, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -710,7 +754,7 @@ func (s *Service) mutateResource(ctx context.Context, actorID string, expected *
 		}
 		return nil, fmt.Errorf("save workspace: %w", err)
 	}
-	result := &MutationResult{Rev: ws.Rev, Resource: resource}
+	result.Rev = ws.Rev
 	if s.publisher != nil {
 		s.publisher.Publish(Event{Type: eventType, Payload: result, WorkspaceID: s.workspaceID})
 		s.publisher.Publish(Event{Type: "activity.created", Payload: event, WorkspaceID: s.workspaceID})

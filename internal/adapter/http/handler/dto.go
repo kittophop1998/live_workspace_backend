@@ -90,6 +90,14 @@ type commentResponse struct {
 	Body       string    `json:"body"`
 	At         time.Time `json:"at"`
 }
+type chatMessageResponse struct {
+	ID       string    `json:"id"`
+	AuthorID string    `json:"author_id"`
+	Author   string    `json:"author"`
+	Role     string    `json:"role"`
+	Body     string    `json:"body"`
+	At       time.Time `json:"at"`
+}
 type activityResponse struct {
 	ID         string    `json:"id"`
 	Actor      string    `json:"actor"`
@@ -152,6 +160,9 @@ func fieldDTO(field entity.SchemaField) fieldResponse {
 }
 func commentDTO(value entity.Comment) commentResponse {
 	return commentResponse{ID: value.ID, ResourceID: value.ResourceID, FieldID: value.FieldID, Author: value.Author, Role: string(value.Role), Body: value.Body, At: value.At}
+}
+func chatMessageDTO(value entity.ChatMessage) chatMessageResponse {
+	return chatMessageResponse{ID: value.ID, AuthorID: value.AuthorID, Author: value.Author, Role: string(value.Role), Body: value.Body, At: value.At}
 }
 func activityDTO(value entity.ActivityEvent) activityResponse {
 	return activityResponse{ID: value.ID, Actor: value.Actor, Verb: value.Verb, Target: value.Target, ResourceID: value.ResourceID, At: value.At}

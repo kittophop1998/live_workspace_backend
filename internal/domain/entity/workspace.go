@@ -112,6 +112,18 @@ type Comment struct {
 	At         time.Time
 }
 
+// ChatMessage is a project-wide team chat message. Chat lives outside the
+// rev'd workspace aggregate: it is append-only and never conflicts, so sending
+// a message must not bump Rev or copy the workspace children.
+type ChatMessage struct {
+	ID       string
+	AuthorID string
+	Author   string
+	Role     CollaboratorRole
+	Body     string
+	At       time.Time
+}
+
 type ActivityEvent struct {
 	ID         string
 	Actor      string

@@ -419,6 +419,36 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	success(c, http.StatusOK, gin.H{"rev": result.Rev, "comment_id": c.Param("id")})
 }
 
+func (h *Handler) ChatMessages(c *gin.Context) {
+	items, err := h.serviceFor(c).ChatMessages(c.Request.Context())
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	out := make([]chatMessageResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, chatMessageDTO(item))
+	}
+	success(c, http.StatusOK, out)
+}
+
+type sendChatMessageRequest struct {
+	Body string `json:"body" binding:"required"`
+}
+
+func (h *Handler) SendChatMessage(c *gin.Context) {
+	var request sendChatMessageRequest
+	if !bind(c, &request) {
+		return
+	}
+	message, err := h.serviceFor(c).SendChatMessage(c.Request.Context(), middleware.CollaboratorID(c), request.Body)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, http.StatusCreated, gin.H{"message": chatMessageDTO(*message)})
+}
+
 func (h *Handler) Activity(c *gin.Context) {
 	page, limit := positiveInt(c.Query("page"), 1), positiveInt(c.Query("limit"), 50)
 	if limit > 100 {

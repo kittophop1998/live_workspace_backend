@@ -71,12 +71,19 @@ func (h *Hub) Serve(c *gin.Context) {
 	h.clients[current] = struct{}{}
 	h.mu.Unlock()
 
-	ws, err := h.service.ForWorkspace(workspaceID).Snapshot(c.Request.Context())
+	service := h.service.ForWorkspace(workspaceID)
+	ws, err := service.Snapshot(c.Request.Context())
 	if err != nil {
 		_ = connection.Close()
 		return
 	}
-	current.send <- message{Type: "snapshot", Payload: snapshotPayload(ws)}
+	// Chat lives outside the workspace aggregate; degrade to an empty history
+	// rather than dropping the whole snapshot if it fails to load.
+	chat, err := service.ChatMessages(c.Request.Context())
+	if err != nil {
+		chat = nil
+	}
+	current.send <- message{Type: "snapshot", Payload: snapshotPayload(ws, chat)}
 	go h.writeLoop(current)
 	h.readLoop(current, middleware.CollaboratorID(c))
 }
@@ -232,11 +239,13 @@ func eventPayload(event usecase.Event) any {
 		}
 	case entity.ActivityEvent:
 		return map[string]any{"activity": activityPayload(value)}
+	case entity.ChatMessage:
+		return map[string]any{"message": chatMessagePayload(value)}
 	}
 	return event.Payload
 }
 
-func snapshotPayload(ws *entity.Workspace) map[string]any {
+func snapshotPayload(ws *entity.Workspace, chat []entity.ChatMessage) map[string]any {
 	resources := make([]any, 0, len(ws.Resources))
 	for _, item := range ws.Resources {
 		resources = append(resources, resourcePayload(item))
@@ -253,7 +262,11 @@ func snapshotPayload(ws *entity.Workspace) map[string]any {
 	for _, item := range ws.Collaborators {
 		collaborators = append(collaborators, map[string]any{"id": item.ID, "name": item.Name, "role": item.Role, "color": item.Color})
 	}
-	return map[string]any{"rev": ws.Rev, "workspace_id": ws.ID, "resources": resources, "comments": comments, "activity": activity, "collaborators": collaborators, "server_time": time.Now().UTC()}
+	chatMessages := make([]any, 0, len(chat))
+	for _, item := range chat {
+		chatMessages = append(chatMessages, chatMessagePayload(item))
+	}
+	return map[string]any{"rev": ws.Rev, "workspace_id": ws.ID, "resources": resources, "comments": comments, "activity": activity, "collaborators": collaborators, "chat": chatMessages, "server_time": time.Now().UTC()}
 }
 
 func resourcePayload(value entity.Resource) map[string]any {
@@ -302,6 +315,9 @@ func fieldPayload(field entity.SchemaField) map[string]any {
 }
 func commentPayload(value entity.Comment) map[string]any {
 	return map[string]any{"id": value.ID, "resource_id": value.ResourceID, "field_id": value.FieldID, "author": value.Author, "role": value.Role, "body": value.Body, "at": value.At}
+}
+func chatMessagePayload(value entity.ChatMessage) map[string]any {
+	return map[string]any{"id": value.ID, "author_id": value.AuthorID, "author": value.Author, "role": value.Role, "body": value.Body, "at": value.At}
 }
 func activityPayload(value entity.ActivityEvent) map[string]any {
 	return map[string]any{"id": value.ID, "actor": value.Actor, "verb": value.Verb, "target": value.Target, "resource_id": value.ResourceID, "at": value.At}

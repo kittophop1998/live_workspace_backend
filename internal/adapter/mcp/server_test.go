@@ -75,7 +75,7 @@ func testRouter(t *testing.T, enabled bool) (*gin.Engine, *middleware.Auth) {
 		}},
 		Comments: []entity.Comment{{ID: "cmt_one", ResourceID: "res_users", AuthorID: "col_allowed", Body: "Review this"}},
 	}
-	workspaceService := usecase.NewService(workspaceRepository{workspace: ws}, "wsp_test", nil)
+	workspaceService := usecase.NewService(workspaceRepository{workspace: ws}, nil, "wsp_test", nil)
 	flowService := usecase.NewFlowService(flowRepository{flow: &entity.FlowDefinition{
 		ID: "flw_test", WorkspaceID: "wsp_test", Name: "Test flow",
 	}}, workspaceService, nil, nil)
