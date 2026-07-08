@@ -587,11 +587,7 @@ func (s *Service) DeleteField(ctx context.Context, actorID, resourceID, fieldID 
 			return nil, entity.ActivityEvent{}, notFound("field", fieldID)
 		}
 		key := field.Key
-		if field.Change == entity.ChangeAdded {
-			resource.Fields = append(resource.Fields[:index], resource.Fields[index+1:]...)
-		} else {
-			field.Change, field.State = entity.ChangeRemoved, entity.StateBreaking
-		}
+		resource.Fields = append(resource.Fields[:index], resource.Fields[index+1:]...)
 		resource.RollupState()
 		resource.UpdatedAt, resource.UpdatedBy = s.now(), actor.Name
 		return resource, activity(actor, "removed", key, resourceID, resource.UpdatedAt), nil

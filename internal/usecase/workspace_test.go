@@ -72,3 +72,43 @@ func TestImportResourcesDefaultsResponseFieldMetadata(t *testing.T) {
 		t.Fatalf("field change = %q, want %q", field.Change, entity.ChangeAdded)
 	}
 }
+
+func TestDeleteFieldHardDeletesExistingField(t *testing.T) {
+	repo := &fakeWorkspaceRepository{workspace: &entity.Workspace{
+		ID:  "room_1",
+		Rev: 7,
+		Collaborators: []entity.Collaborator{{
+			ID:   "col_1",
+			Name: "Ava",
+			Role: entity.RoleBackend,
+		}},
+		Resources: []entity.Resource{{
+			ID:    "res_1",
+			Name:  "Users",
+			Kind:  entity.KindEndpoint,
+			State: entity.StateReady,
+			Fields: []entity.SchemaField{
+				{ID: "fld_keep", Key: "name", Type: "string", State: entity.StateReady, Change: entity.ChangeStable},
+				{ID: "fld_delete", Key: "email", Type: "string", State: entity.StateReady, Change: entity.ChangeStable},
+			},
+		}},
+	}}
+	service := NewService(repo, "room_1", nil)
+	now := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	result, err := service.DeleteField(context.Background(), "col_1", "res_1", "fld_delete", nil)
+	if err != nil {
+		t.Fatalf("DeleteField returned error: %v", err)
+	}
+	if result.Rev != 8 {
+		t.Fatalf("Rev = %d, want 8", result.Rev)
+	}
+	if got := len(repo.workspace.Resources[0].Fields); got != 1 {
+		t.Fatalf("field count = %d, want 1", got)
+	}
+	field := repo.workspace.Resources[0].Fields[0]
+	if field.ID != "fld_keep" {
+		t.Fatalf("remaining field ID = %q, want fld_keep", field.ID)
+	}
+}
