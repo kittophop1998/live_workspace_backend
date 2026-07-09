@@ -244,6 +244,32 @@ func (r *WorkspaceRepository) Save(ctx context.Context, workspace *entity.Worksp
 	if workspace.Rev <= expectedRev {
 		return fmt.Errorf("save workspace: revision %d must be greater than %d", workspace.Rev, expectedRev)
 	}
+	// Stage under a revision number no concurrent save can share. Trusting the
+	// caller's rev+1 lets two racing saves stage children under the same number:
+	// the child _ids collide, the loser's InsertMany aborts halfway, and its
+	// deleteRevision cleanup below then wipes the revision the winner just
+	// published — emptying the whole workspace. rev_seq is an atomic counter
+	// kept ahead of rev so every attempt gets a unique, monotonically
+	// increasing number ($max absorbs docs from before this field existed).
+	var allocated struct {
+		Rev int64 `bson:"rev_seq"`
+	}
+	err := r.workspaces.FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": workspace.ID},
+		mongo.Pipeline{{{Key: "$set", Value: bson.M{
+			"rev_seq": bson.M{"$add": bson.A{bson.M{"$max": bson.A{"$rev_seq", "$rev"}}, 1}},
+		}}}},
+		options.FindOneAndUpdate().SetReturnDocument(options.After).SetProjection(bson.M{"rev_seq": 1}),
+	).Decode(&allocated)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return port.ErrWorkspaceNotFound
+		}
+		return fmt.Errorf("allocate workspace revision: %w", err)
+	}
+	workspace.Rev = allocated.Rev
+
 	if err := r.insertRevision(ctx, workspace); err != nil {
 		_ = r.deleteRevision(ctx, workspace.ID, workspace.Rev)
 		return fmt.Errorf("stage workspace revision: %w", err)

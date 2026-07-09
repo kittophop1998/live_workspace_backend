@@ -727,39 +727,54 @@ func (s *Service) mutateResource(ctx context.Context, actorID string, expected *
 // whose payload is not a resource (comments) broadcasts its real data instead
 // of a half-filled result patched up after the event already went out.
 func (s *Service) mutateWorkspace(ctx context.Context, actorID string, expected *int64, eventType string, fn func(*entity.Workspace, entity.Collaborator) (*MutationResult, entity.ActivityEvent, error)) (*MutationResult, error) {
-	ws, err := s.Snapshot(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if expected != nil && *expected != ws.Rev {
-		return nil, &Error{Kind: ErrRevConflict, Message: "workspace revision is stale", Details: map[string]any{"current_rev": ws.Rev}}
-	}
-	actor, ok := collaborator(ws, actorID)
-	if !ok {
-		return nil, notFound("collaborator", actorID)
-	}
-	oldRev := ws.Rev
-	result, event, err := fn(ws, actor)
-	if err != nil {
-		return nil, err
-	}
-	ws.Rev++
-	ws.Activity = append(ws.Activity, event)
-	if len(ws.Activity) > 1000 {
-		ws.Activity = ws.Activity[len(ws.Activity)-1000:]
-	}
-	if err := s.repo.Save(ctx, ws, oldRev); err != nil {
-		if errors.Is(err, port.ErrRevisionConflict) {
-			return nil, &Error{Kind: ErrRevConflict, Message: "workspace was changed by another client"}
+	// A caller that pinned a revision gets a conflict straight back; the
+	// fire-and-forget writers (the frontend's debounced auto-saves send no rev
+	// and swallow errors) get the mutation re-applied on a fresh snapshot so a
+	// save that raced another client's still lands (mirrors RoomService.Join).
+	for range 5 {
+		ws, err := s.Snapshot(ctx)
+		if err != nil {
+			// The repo's read-verify loop gives up when writers keep
+			// republishing mid-read — that's contention, not failure: reload.
+			if errors.Is(err, port.ErrRevisionConflict) {
+				continue
+			}
+			return nil, err
 		}
-		return nil, fmt.Errorf("save workspace: %w", err)
+		if expected != nil && *expected != ws.Rev {
+			return nil, &Error{Kind: ErrRevConflict, Message: "workspace revision is stale", Details: map[string]any{"current_rev": ws.Rev}}
+		}
+		actor, ok := collaborator(ws, actorID)
+		if !ok {
+			return nil, notFound("collaborator", actorID)
+		}
+		oldRev := ws.Rev
+		result, event, err := fn(ws, actor)
+		if err != nil {
+			return nil, err
+		}
+		ws.Rev++
+		ws.Activity = append(ws.Activity, event)
+		if len(ws.Activity) > 1000 {
+			ws.Activity = ws.Activity[len(ws.Activity)-1000:]
+		}
+		if err := s.repo.Save(ctx, ws, oldRev); err != nil {
+			if errors.Is(err, port.ErrRevisionConflict) {
+				if expected == nil {
+					continue
+				}
+				return nil, &Error{Kind: ErrRevConflict, Message: "workspace was changed by another client"}
+			}
+			return nil, fmt.Errorf("save workspace: %w", err)
+		}
+		result.Rev = ws.Rev
+		if s.publisher != nil {
+			s.publisher.Publish(Event{Type: eventType, Payload: result, WorkspaceID: s.workspaceID})
+			s.publisher.Publish(Event{Type: "activity.created", Payload: event, WorkspaceID: s.workspaceID})
+		}
+		return result, nil
 	}
-	result.Rev = ws.Rev
-	if s.publisher != nil {
-		s.publisher.Publish(Event{Type: eventType, Payload: result, WorkspaceID: s.workspaceID})
-		s.publisher.Publish(Event{Type: "activity.created", Payload: event, WorkspaceID: s.workspaceID})
-	}
-	return result, nil
+	return nil, &Error{Kind: ErrRevConflict, Message: "workspace was changed by another client"}
 }
 
 func validateField(key, fieldType, state string) error {
