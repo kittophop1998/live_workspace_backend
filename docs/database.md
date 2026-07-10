@@ -14,6 +14,8 @@ treat a workspace as one aggregate.
 | `collaborators` | Room members | `workspace_id`, `workspace_rev`, `position` |
 | `flows` | Persisted E2E flow definitions | `workspace_id`, `created_at` |
 | `flow_runs` | Flow execution history | `workspace_id`, `flow_id`, `started_at` |
+| `chat_messages` | Project-wide team chat (append-only, outside the rev'd aggregate) | `workspace_id`, `at` |
+| `task_logs` | Backend work-update log (append-only, outside the rev'd aggregate) | `workspace_id`, `kind`, `resource_id`, `at` |
 
 Child records use readable `snake_case` BSON field names. `_id` has the form
 `<workspace_id>:<workspace_rev>:<entity_id>`.

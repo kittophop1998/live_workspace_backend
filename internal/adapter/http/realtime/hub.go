@@ -83,7 +83,11 @@ func (h *Hub) Serve(c *gin.Context) {
 	if err != nil {
 		chat = nil
 	}
-	current.send <- message{Type: "snapshot", Payload: snapshotPayload(ws, chat)}
+	taskLogs, err := service.TaskLogs(c.Request.Context())
+	if err != nil {
+		taskLogs = nil
+	}
+	current.send <- message{Type: "snapshot", Payload: snapshotPayload(ws, chat, taskLogs)}
 	go h.writeLoop(current)
 	h.readLoop(current, middleware.CollaboratorID(c))
 }
@@ -241,11 +245,13 @@ func eventPayload(event usecase.Event) any {
 		return map[string]any{"activity": activityPayload(value)}
 	case entity.ChatMessage:
 		return map[string]any{"message": chatMessagePayload(value)}
+	case entity.TaskLog:
+		return map[string]any{"task_log": taskLogPayload(value)}
 	}
 	return event.Payload
 }
 
-func snapshotPayload(ws *entity.Workspace, chat []entity.ChatMessage) map[string]any {
+func snapshotPayload(ws *entity.Workspace, chat []entity.ChatMessage, taskLogs []entity.TaskLog) map[string]any {
 	resources := make([]any, 0, len(ws.Resources))
 	for _, item := range ws.Resources {
 		resources = append(resources, resourcePayload(item))
@@ -266,7 +272,11 @@ func snapshotPayload(ws *entity.Workspace, chat []entity.ChatMessage) map[string
 	for _, item := range chat {
 		chatMessages = append(chatMessages, chatMessagePayload(item))
 	}
-	return map[string]any{"rev": ws.Rev, "workspace_id": ws.ID, "resources": resources, "comments": comments, "activity": activity, "collaborators": collaborators, "chat": chatMessages, "server_time": time.Now().UTC()}
+	taskLogEntries := make([]any, 0, len(taskLogs))
+	for _, item := range taskLogs {
+		taskLogEntries = append(taskLogEntries, taskLogPayload(item))
+	}
+	return map[string]any{"rev": ws.Rev, "workspace_id": ws.ID, "resources": resources, "comments": comments, "activity": activity, "collaborators": collaborators, "chat": chatMessages, "task_logs": taskLogEntries, "server_time": time.Now().UTC()}
 }
 
 func resourcePayload(value entity.Resource) map[string]any {
@@ -318,6 +328,9 @@ func commentPayload(value entity.Comment) map[string]any {
 }
 func chatMessagePayload(value entity.ChatMessage) map[string]any {
 	return map[string]any{"id": value.ID, "author_id": value.AuthorID, "author": value.Author, "role": value.Role, "body": value.Body, "at": value.At}
+}
+func taskLogPayload(value entity.TaskLog) map[string]any {
+	return map[string]any{"id": value.ID, "author_id": value.AuthorID, "author": value.Author, "role": value.Role, "kind": value.Kind, "body": value.Body, "resource_id": value.ResourceID, "at": value.At}
 }
 func activityPayload(value entity.ActivityEvent) map[string]any {
 	return map[string]any{"id": value.ID, "actor": value.Actor, "verb": value.Verb, "target": value.Target, "resource_id": value.ResourceID, "at": value.At}

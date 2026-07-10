@@ -30,6 +30,94 @@ func (f *fakeWorkspaceRepository) Save(_ context.Context, workspace *entity.Work
 	return nil
 }
 
+type fakeTaskLogRepository struct {
+	entries []entity.TaskLog
+}
+
+func (f *fakeTaskLogRepository) Append(_ context.Context, _ string, entry entity.TaskLog) error {
+	f.entries = append(f.entries, entry)
+	return nil
+}
+
+func (f *fakeTaskLogRepository) List(_ context.Context, _ string, limit int) ([]entity.TaskLog, error) {
+	if len(f.entries) <= limit {
+		return f.entries, nil
+	}
+	return f.entries[len(f.entries)-limit:], nil
+}
+
+type capturingPublisher struct {
+	events []Event
+}
+
+func (p *capturingPublisher) Publish(e Event) { p.events = append(p.events, e) }
+
+func TestAddTaskLogPersistsBroadcastsAndDefaultsKind(t *testing.T) {
+	repo := &fakeWorkspaceRepository{workspace: &entity.Workspace{
+		ID: "room_1",
+		Collaborators: []entity.Collaborator{{
+			ID: "col_1", Name: "Ava", Role: entity.RoleBackend,
+		}},
+		Resources: []entity.Resource{{ID: "res_1", Name: "Users", Kind: entity.KindEndpoint}},
+	}}
+	taskLogs := &fakeTaskLogRepository{}
+	publisher := &capturingPublisher{}
+	service := NewService(repo, nil, taskLogs, "room_1", publisher)
+	now := time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	// Empty kind defaults to "note"; resource_id is validated and kept.
+	entry, err := service.AddTaskLog(context.Background(), "col_1", "", "  bumped the pagination limit  ", "res_1")
+	if err != nil {
+		t.Fatalf("AddTaskLog returned error: %v", err)
+	}
+	if entry.Kind != entity.TaskLogNote {
+		t.Fatalf("kind = %q, want %q", entry.Kind, entity.TaskLogNote)
+	}
+	if entry.Body != "bumped the pagination limit" {
+		t.Fatalf("body = %q, want trimmed", entry.Body)
+	}
+	if entry.Author != "Ava" || entry.Role != entity.RoleBackend {
+		t.Fatalf("author/role = %q/%q, want Ava/backend (server-derived)", entry.Author, entry.Role)
+	}
+	if entry.ResourceID != "res_1" {
+		t.Fatalf("resource_id = %q, want res_1", entry.ResourceID)
+	}
+	if len(publisher.events) != 1 || publisher.events[0].Type != "task_log.created" {
+		t.Fatalf("events = %+v, want one task_log.created", publisher.events)
+	}
+
+	// A typed entry round-trips through List.
+	if _, err := service.AddTaskLog(context.Background(), "col_1", entity.TaskLogAdded, "added POST /orders", ""); err != nil {
+		t.Fatalf("AddTaskLog (typed) returned error: %v", err)
+	}
+	list, err := service.TaskLogs(context.Background())
+	if err != nil {
+		t.Fatalf("TaskLogs returned error: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("task log count = %d, want 2", len(list))
+	}
+}
+
+func TestAddTaskLogRejectsBadInput(t *testing.T) {
+	repo := &fakeWorkspaceRepository{workspace: &entity.Workspace{
+		ID:            "room_1",
+		Collaborators: []entity.Collaborator{{ID: "col_1", Name: "Ava", Role: entity.RoleBackend}},
+	}}
+	service := NewService(repo, nil, &fakeTaskLogRepository{}, "room_1", &capturingPublisher{})
+
+	if _, err := service.AddTaskLog(context.Background(), "col_1", "", "   ", ""); err == nil {
+		t.Fatal("empty body: expected error, got nil")
+	}
+	if _, err := service.AddTaskLog(context.Background(), "col_1", "bogus", "hi", ""); err == nil {
+		t.Fatal("bad kind: expected error, got nil")
+	}
+	if _, err := service.AddTaskLog(context.Background(), "col_1", "note", "hi", "res_missing"); err == nil {
+		t.Fatal("unknown resource_id: expected error, got nil")
+	}
+}
+
 func TestImportResourcesDefaultsResponseFieldMetadata(t *testing.T) {
 	repo := &fakeWorkspaceRepository{workspace: &entity.Workspace{
 		ID: "room_1",
@@ -39,7 +127,7 @@ func TestImportResourcesDefaultsResponseFieldMetadata(t *testing.T) {
 			Role: entity.RoleBackend,
 		}},
 	}}
-	service := NewService(repo, nil, "room_1", nil)
+	service := NewService(repo, nil, nil, "room_1", nil)
 	now := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
 
@@ -93,7 +181,7 @@ func TestDeleteFieldHardDeletesExistingField(t *testing.T) {
 			},
 		}},
 	}}
-	service := NewService(repo, nil, "room_1", nil)
+	service := NewService(repo, nil, nil, "room_1", nil)
 	now := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
 

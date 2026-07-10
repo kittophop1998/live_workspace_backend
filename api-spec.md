@@ -251,6 +251,34 @@ outside the rev'd workspace aggregate — sending a message does **not** bump
 }
 ```
 
+### TaskLog
+A **manually-authored** backend work-update entry — the backend developer types
+"I added X / changed Y / fixed Z" so the frontend can see, in one live feed, what
+the backend has actually shipped. Distinct from `ActivityEvent` (which is the
+server's automatic audit of schema mutations): a `TaskLog` is human-written prose.
+Like `ChatMessage` it is append-only and stored **outside** the rev'd workspace
+aggregate (own `task_logs` collection) — posting one does **not** bump `rev` and
+never hits a revision conflict. It may optionally reference a resource via
+`resource_id` (empty = a workspace-wide note).
+```json
+{
+  "id": "tlg_1a2b3c",
+  "author_id": "col_ava",
+  "author": "Ava Chen",
+  "role": "backend",            // author's role at post time
+  "kind": "added",              // added | changed | fixed | removed | note
+  "body": "POST /orders now returns the created order body, not just its id.",
+  "resource_id": "res_create_order", // optional; "" = workspace-wide note
+  "at": "2026-07-10T08:01:00Z"
+}
+```
+- `kind` categorizes the update for badging/filtering; an empty/omitted `kind`
+  defaults to `note`. `author`/`author_role`/`at` are derived server-side from the
+  authenticated collaborator — never client-submitted.
+- A non-empty `resource_id` is validated against the room's resources on create
+  (`404 NOT_FOUND` if unknown). A resource deleted **after** the log was posted
+  leaves the `resource_id` dangling (kept as-is; not cascade-cleaned).
+
 ### ActivityEvent
 Append-only audit feed. Emitted by the server on every mutation.
 ```json
@@ -276,6 +304,7 @@ plus the roster).
   "activity": [ "...ActivityEvent" ],
   "collaborators": [ "...Collaborator" ],
   "chat": [ "...ChatMessage" ],   // WS snapshot only — last 200 messages, oldest first
+  "task_logs": [ "...TaskLog" ],  // WS snapshot only — last 200 entries, oldest first
   "server_time": "2026-06-30T08:00:00Z"
 }
 ```
@@ -496,6 +525,19 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 | GET | `/chat` | Last 200 chat messages, oldest first |
 | POST | `/chat` | Send a message (`{ "body" }`, max 2000 chars) → `201 { "message": ChatMessage }`; broadcasts `chat.created` |
 
+### Backend work-update log
+| method | path | purpose |
+|--------|------|---------|
+| GET | `/task-logs` | Last 200 task-log entries, oldest first |
+| POST | `/task-logs` | Post an update (`{ "kind", "body", "resource_id" }`) → `201 { "task_log": TaskLog }`; broadcasts `task_log.created` |
+
+> Task logs live in a dedicated `task_logs` collection and, like chat, are
+> append-only and do **not** bump the workspace `rev` or emit `ActivityEvent`s.
+> On `POST`, `body` is required (max 2000 chars); `kind` defaults to `note` when
+> empty and must be one of `added | changed | fixed | removed | note`;
+> `resource_id` is optional and, when present, must reference an existing resource.
+> `author`/`role`/`at` are set server-side from the token.
+
 ### Activity
 | method | path | purpose |
 |--------|------|---------|
@@ -601,6 +643,7 @@ All payloads reuse the §2 models. Clients merge by `rev` (ignore `rev <= local`
 | `comment.created` / `comment.deleted` | `{ "rev", "comment": Comment }` / `{ "rev", "comment_id" }` |
 | `activity.created` | `{ "activity": ActivityEvent }` |
 | `chat.created` | `{ "message": ChatMessage }` (no `rev` — chat is outside the rev'd aggregate) |
+| `task_log.created` | `{ "task_log": TaskLog }` (no `rev` — task logs are outside the rev'd aggregate) |
 | `presence.update` | `Presence` (a peer's heartbeat) |
 | `presence.leave` | `{ "client_id" }` |
 

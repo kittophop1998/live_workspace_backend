@@ -34,17 +34,18 @@ type Publisher interface {
 type Service struct {
 	repo        port.WorkspaceRepository
 	chat        port.ChatRepository
+	taskLog     port.TaskLogRepository
 	workspaceID string
 	publisher   Publisher
 	now         func() time.Time
 }
 
-func NewService(repo port.WorkspaceRepository, chat port.ChatRepository, workspaceID string, publisher Publisher) *Service {
-	return &Service{repo: repo, chat: chat, workspaceID: workspaceID, publisher: publisher, now: func() time.Time { return time.Now().UTC() }}
+func NewService(repo port.WorkspaceRepository, chat port.ChatRepository, taskLog port.TaskLogRepository, workspaceID string, publisher Publisher) *Service {
+	return &Service{repo: repo, chat: chat, taskLog: taskLog, workspaceID: workspaceID, publisher: publisher, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *Service) ForWorkspace(workspaceID string) *Service {
-	return &Service{repo: s.repo, chat: s.chat, workspaceID: workspaceID, publisher: s.publisher, now: s.now}
+	return &Service{repo: s.repo, chat: s.chat, taskLog: s.taskLog, workspaceID: workspaceID, publisher: s.publisher, now: s.now}
 }
 
 func (s *Service) Snapshot(ctx context.Context) (*entity.Workspace, error) {
@@ -690,6 +691,71 @@ func (s *Service) SendChatMessage(ctx context.Context, actorID, body string) (*e
 		s.publisher.Publish(Event{Type: "chat.created", Payload: message, WorkspaceID: s.workspaceID})
 	}
 	return &message, nil
+}
+
+// taskLogHistoryLimit caps how many entries a snapshot / GET /task-logs returns;
+// older entries stay in storage but are not replayed to clients.
+const taskLogHistoryLimit = 200
+
+const taskLogBodyMaxLen = 2000
+
+var taskLogKinds = map[entity.TaskLogKind]bool{
+	entity.TaskLogAdded: true, entity.TaskLogChanged: true, entity.TaskLogFixed: true,
+	entity.TaskLogRemoved: true, entity.TaskLogNote: true,
+}
+
+func (s *Service) TaskLogs(ctx context.Context) ([]entity.TaskLog, error) {
+	if s.taskLog == nil {
+		return []entity.TaskLog{}, nil
+	}
+	return s.taskLog.List(ctx, s.workspaceID, taskLogHistoryLimit)
+}
+
+// AddTaskLog appends a backend work-update entry and broadcasts it. Like chat it
+// is append-only and lives outside the workspace aggregate, so it does not bump
+// Rev and cannot hit a revision conflict. An empty kind defaults to "note"; a
+// non-empty resourceID is validated against the room's resources.
+func (s *Service) AddTaskLog(ctx context.Context, actorID string, kind entity.TaskLogKind, body, resourceID string) (*entity.TaskLog, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, validation("task log body is required", nil)
+	}
+	if len(body) > taskLogBodyMaxLen {
+		return nil, validation("task log is too long", map[string]any{"max_length": taskLogBodyMaxLen})
+	}
+	if kind == "" {
+		kind = entity.TaskLogNote
+	}
+	if !taskLogKinds[kind] {
+		return nil, validation("unknown task log kind", map[string]any{"kind": string(kind)})
+	}
+	if s.taskLog == nil {
+		return nil, fmt.Errorf("task log repository is not configured")
+	}
+	ws, err := s.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actor, ok := collaborator(ws, actorID)
+	if !ok {
+		return nil, notFound("collaborator", actorID)
+	}
+	if resourceID != "" {
+		if _, idx := findResource(ws, resourceID); idx < 0 {
+			return nil, notFound("resource", resourceID)
+		}
+	}
+	entry := entity.TaskLog{
+		ID: "tlg_" + shortID(), AuthorID: actor.ID, Author: actor.Name, Role: actor.Role,
+		Kind: kind, Body: body, ResourceID: resourceID, At: s.now(),
+	}
+	if err := s.taskLog.Append(ctx, s.workspaceID, entry); err != nil {
+		return nil, fmt.Errorf("append task log: %w", err)
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(Event{Type: "task_log.created", Payload: entry, WorkspaceID: s.workspaceID})
+	}
+	return &entry, nil
 }
 
 func (s *Service) Activity(ctx context.Context, resourceID string, page, limit int) ([]entity.ActivityEvent, int, error) {

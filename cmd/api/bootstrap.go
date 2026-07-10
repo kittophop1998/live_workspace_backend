@@ -113,8 +113,13 @@ func buildApplication(ctx context.Context, cfg config.Config, client *mongo.Clie
 		return nil, err
 	}
 
+	taskLogRepository := mongorepo.NewTaskLogRepository(database)
+	if err := taskLogRepository.EnsureIndexes(ctx); err != nil {
+		return nil, err
+	}
+
 	hub := realtime.NewHub(cfg.AllowedOrigins)
-	workspaceService := usecase.NewService(workspaceRepository, chatRepository, cfg.WorkspaceID, hub)
+	workspaceService := usecase.NewService(workspaceRepository, chatRepository, taskLogRepository, cfg.WorkspaceID, hub)
 	roomService := usecase.NewRoomService(workspaceRepository)
 	storyService := usecase.NewStoryService(storyRepository)
 	proposalService := usecase.NewProposalService(proposalRepository)

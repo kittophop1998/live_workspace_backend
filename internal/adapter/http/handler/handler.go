@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kingdom_manager/backend/internal/adapter/http/middleware"
+	"kingdom_manager/backend/internal/domain/entity"
 	"kingdom_manager/backend/internal/domain/port"
 	"kingdom_manager/backend/internal/usecase"
 )
@@ -447,6 +448,38 @@ func (h *Handler) SendChatMessage(c *gin.Context) {
 		return
 	}
 	success(c, http.StatusCreated, gin.H{"message": chatMessageDTO(*message)})
+}
+
+func (h *Handler) TaskLogs(c *gin.Context) {
+	items, err := h.serviceFor(c).TaskLogs(c.Request.Context())
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	out := make([]taskLogResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, taskLogDTO(item))
+	}
+	success(c, http.StatusOK, out)
+}
+
+type addTaskLogRequest struct {
+	Kind       string `json:"kind"`
+	Body       string `json:"body" binding:"required"`
+	ResourceID string `json:"resource_id"`
+}
+
+func (h *Handler) AddTaskLog(c *gin.Context) {
+	var request addTaskLogRequest
+	if !bind(c, &request) {
+		return
+	}
+	entry, err := h.serviceFor(c).AddTaskLog(c.Request.Context(), middleware.CollaboratorID(c), entity.TaskLogKind(request.Kind), request.Body, request.ResourceID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, http.StatusCreated, gin.H{"task_log": taskLogDTO(*entry)})
 }
 
 func (h *Handler) Activity(c *gin.Context) {

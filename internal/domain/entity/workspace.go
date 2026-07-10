@@ -124,6 +124,34 @@ type ChatMessage struct {
 	At       time.Time
 }
 
+// TaskLogKind categorizes a backend work-update entry so the frontend can
+// badge/filter it (what the backend added, changed, fixed, removed, or a plain note).
+type TaskLogKind string
+
+const (
+	TaskLogAdded   TaskLogKind = "added"
+	TaskLogChanged TaskLogKind = "changed"
+	TaskLogFixed   TaskLogKind = "fixed"
+	TaskLogRemoved TaskLogKind = "removed"
+	TaskLogNote    TaskLogKind = "note"
+)
+
+// TaskLog is a manually-authored backend work-update entry ("I added X / changed
+// Y"), broadcast to the room so the frontend knows what the backend has shipped.
+// Like ChatMessage it is append-only and lives outside the rev'd workspace
+// aggregate, so posting one never bumps Rev or hits a revision conflict. It may
+// optionally reference a Resource via ResourceID (empty = workspace-wide note).
+type TaskLog struct {
+	ID         string
+	AuthorID   string
+	Author     string
+	Role       CollaboratorRole
+	Kind       TaskLogKind
+	Body       string
+	ResourceID string
+	At         time.Time
+}
+
 type ActivityEvent struct {
 	ID         string
 	Actor      string
