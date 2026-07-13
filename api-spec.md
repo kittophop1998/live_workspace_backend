@@ -464,6 +464,26 @@ drafting a proposal never conflicts with schema edits.
 - `timeline` is append-only; entries are never edited or removed, only appended
   by the mutating endpoints below.
 
+### Feedback (usage reports — persisted)
+A workspace-scoped usage report — a complaint, an improvement request, or a bug —
+that any collaborator can file and anyone in the room can move through a simple
+status lifecycle. Stored in its **own Mongo collection** (`feedback`), scoped by
+`workspace_id` — like Story/Proposal, *not* embedded in the rev-guarded
+workspace document.
+```json
+{
+  "id": "fbk_5d43", "workspace_id": "123456",
+  "category": "complaint", "body": "The Flows page loads slowly with many runs.",
+  "author": "Ava Chen", "author_role": "backend", "status": "open",
+  "created_at": "2026-07-13T03:00:00Z", "updated_at": "2026-07-13T03:00:00Z", "updated_by": "Ava Chen"
+}
+```
+- `category`: `complaint` | `improvement` | `bug` | `other` (defaults to `other`).
+- `status`: `open` | `in_progress` | `resolved` | `dismissed` (created as `open`).
+- `author`/`author_role` are derived server-side from the authenticated
+  collaborator — never client-submitted. `updated_by` tracks the last actor
+  (e.g. whoever changed the status).
+
 ---
 
 ## 3. REST Endpoints
@@ -615,6 +635,18 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 > against the live `Resource.fields` and applies the changes through the normal
 > field endpoints (§3 Fields), then calls `POST /proposals/{id}/status` with
 > `"merged"` — there is no dedicated merge endpoint.
+
+### Feedback (usage reports)
+| method | path | purpose |
+|--------|------|---------|
+| POST | `/feedback` | File a report `{ "category?", "body" }` (body required; category defaults to `other`) → `Feedback` (status `open`) |
+| GET | `/feedback` | List every report in the room (newest first) |
+| POST | `/feedback/{id}/status` | Change status `{ "status": "open\|in_progress\|resolved\|dismissed" }` → updated `Feedback` |
+| DELETE | `/feedback/{id}` | Delete a report → `{ "feedback_id" }` |
+
+> Like Proposals, feedback lives in its own collection and does **not** bump the
+> workspace `rev` or emit WebSocket/activity events — the Feedback dialog
+> re-fetches `GET /feedback` each time it opens.
 
 ---
 

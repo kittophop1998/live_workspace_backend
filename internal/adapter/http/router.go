@@ -79,6 +79,12 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.POST("/proposals/:id/comments", h.AddProposalComment)
 		v1.PATCH("/proposals/:id/comments/:comment_id", h.ResolveProposalComment)
 
+		// Usage feedback — complaints / improvement requests with a status lifecycle.
+		v1.POST("/feedback", h.CreateFeedback)
+		v1.GET("/feedback", h.ListFeedback)
+		v1.POST("/feedback/:id/status", h.SetFeedbackStatus)
+		v1.DELETE("/feedback/:id", h.DeleteFeedback)
+
 		v1.GET("/stream", hub.Serve)
 	}
 	return router
