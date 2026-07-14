@@ -46,9 +46,11 @@ func NewRouter(h *handler.Handler, auth *middleware.Auth, hub *realtime.Hub, ori
 		v1.GET("/chat", h.ChatMessages)
 		v1.POST("/chat", h.SendChatMessage)
 
-		// Backend work-update log (append-only; broadcast as `task_log.created`).
+		// Backend work-update log (append-only; broadcast as `task_log.created`,
+		// like toggles as `task_log.updated`).
 		v1.GET("/task-logs", h.TaskLogs)
 		v1.POST("/task-logs", h.AddTaskLog)
+		v1.POST("/task-logs/:id/like", h.ToggleTaskLogLike)
 
 		// API testing (single-request proxy) + E2E flow testing.
 		v1.POST("/http/test", h.HTTPTest)

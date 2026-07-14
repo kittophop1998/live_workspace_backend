@@ -46,6 +46,15 @@ type taskLogDocument struct {
 	Body        string    `bson:"body"`
 	ResourceID  string    `bson:"resource_id"`
 	At          time.Time `bson:"at"`
+	Likes       []string  `bson:"likes,omitempty"`
+}
+
+func (d taskLogDocument) toEntity() entity.TaskLog {
+	return entity.TaskLog{
+		ID: d.ID, AuthorID: d.AuthorID, Author: d.Author,
+		Role: entity.CollaboratorRole(d.Role), Kind: entity.TaskLogKind(d.Kind),
+		Body: d.Body, ResourceID: d.ResourceID, At: d.At, Likes: d.Likes,
+	}
 }
 
 func (r *TaskLogRepository) Append(ctx context.Context, workspaceID string, entry entity.TaskLog) error {
@@ -53,12 +62,41 @@ func (r *TaskLogRepository) Append(ctx context.Context, workspaceID string, entr
 		DocumentID: workspaceID + ":" + entry.ID, WorkspaceID: workspaceID,
 		ID: entry.ID, AuthorID: entry.AuthorID, Author: entry.Author,
 		Role: string(entry.Role), Kind: string(entry.Kind), Body: entry.Body,
-		ResourceID: entry.ResourceID, At: entry.At,
+		ResourceID: entry.ResourceID, At: entry.At, Likes: entry.Likes,
 	})
 	if err != nil {
 		return fmt.Errorf("insert task log: %w", err)
 	}
 	return nil
+}
+
+// ToggleLike flips collaboratorID's membership in the entry's likes array in a
+// single aggregation-pipeline update, so concurrent toggles from different
+// collaborators cannot lose each other's writes.
+func (r *TaskLogRepository) ToggleLike(ctx context.Context, workspaceID, entryID, collaboratorID string) (*entity.TaskLog, error) {
+	current := bson.M{"$ifNull": bson.A{"$likes", bson.A{}}}
+	pipeline := mongo.Pipeline{{{Key: "$set", Value: bson.M{
+		"likes": bson.M{"$cond": bson.A{
+			bson.M{"$in": bson.A{collaboratorID, current}},
+			bson.M{"$setDifference": bson.A{current, bson.A{collaboratorID}}},
+			bson.M{"$concatArrays": bson.A{current, bson.A{collaboratorID}}},
+		}},
+	}}}}
+	var document taskLogDocument
+	err := r.entries.FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": workspaceID + ":" + entryID},
+		pipeline,
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&document)
+	if err == mongo.ErrNoDocuments {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("toggle task log like: %w", err)
+	}
+	out := document.toEntity()
+	return &out, nil
 }
 
 func (r *TaskLogRepository) List(ctx context.Context, workspaceID string, limit int) ([]entity.TaskLog, error) {
@@ -77,11 +115,7 @@ func (r *TaskLogRepository) List(ctx context.Context, workspaceID string, limit 
 	}
 	out := make([]entity.TaskLog, len(documents))
 	for i, value := range documents {
-		out[len(documents)-1-i] = entity.TaskLog{
-			ID: value.ID, AuthorID: value.AuthorID, Author: value.Author,
-			Role: entity.CollaboratorRole(value.Role), Kind: entity.TaskLogKind(value.Kind),
-			Body: value.Body, ResourceID: value.ResourceID, At: value.At,
-		}
+		out[len(documents)-1-i] = value.toEntity()
 	}
 	return out, nil
 }

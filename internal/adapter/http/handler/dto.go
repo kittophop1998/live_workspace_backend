@@ -107,6 +107,7 @@ type taskLogResponse struct {
 	Body       string    `json:"body"`
 	ResourceID string    `json:"resource_id"`
 	At         time.Time `json:"at"`
+	Likes      []string  `json:"likes"`
 }
 type activityResponse struct {
 	ID         string    `json:"id"`
@@ -175,7 +176,11 @@ func chatMessageDTO(value entity.ChatMessage) chatMessageResponse {
 	return chatMessageResponse{ID: value.ID, AuthorID: value.AuthorID, Author: value.Author, Role: string(value.Role), Body: value.Body, At: value.At}
 }
 func taskLogDTO(value entity.TaskLog) taskLogResponse {
-	return taskLogResponse{ID: value.ID, AuthorID: value.AuthorID, Author: value.Author, Role: string(value.Role), Kind: string(value.Kind), Body: value.Body, ResourceID: value.ResourceID, At: value.At}
+	likes := value.Likes
+	if likes == nil {
+		likes = []string{}
+	}
+	return taskLogResponse{ID: value.ID, AuthorID: value.AuthorID, Author: value.Author, Role: string(value.Role), Kind: string(value.Kind), Body: value.Body, ResourceID: value.ResourceID, At: value.At, Likes: likes}
 }
 func activityDTO(value entity.ActivityEvent) activityResponse {
 	return activityResponse{ID: value.ID, Actor: value.Actor, Verb: value.Verb, Target: value.Target, ResourceID: value.ResourceID, At: value.At}

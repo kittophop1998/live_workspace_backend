@@ -269,7 +269,8 @@ never hits a revision conflict. It may optionally reference a resource via
   "kind": "added",              // added | changed | fixed | removed | note
   "body": "POST /orders now returns the created order body, not just its id.",
   "resource_id": "res_create_order", // optional; "" = workspace-wide note
-  "at": "2026-07-10T08:01:00Z"
+  "at": "2026-07-10T08:01:00Z",
+  "likes": ["col_bo"]           // collaborator ids who liked this entry
 }
 ```
 - `kind` categorizes the update for badging/filtering; an empty/omitted `kind`
@@ -278,6 +279,10 @@ never hits a revision conflict. It may optionally reference a resource via
 - A non-empty `resource_id` is validated against the room's resources on create
   (`404 NOT_FOUND` if unknown). A resource deleted **after** the log was posted
   leaves the `resource_id` dangling (kept as-is; not cascade-cleaned).
+- `likes` is the entry's one mutable facet — the body/author/kind never change
+  after posting, but any collaborator may toggle their own like via
+  `POST /task-logs/{id}/like`. Toggling does **not** bump `rev`; it broadcasts
+  `task_log.updated` with the full updated entry.
 
 ### ActivityEvent
 Append-only audit feed. Emitted by the server on every mutation.
@@ -550,6 +555,7 @@ Both responses contain `access_token`, `room_code`, `collaborator`, and `session
 |--------|------|---------|
 | GET | `/task-logs` | Last 200 task-log entries, oldest first |
 | POST | `/task-logs` | Post an update (`{ "kind", "body", "resource_id" }`) → `201 { "task_log": TaskLog }`; broadcasts `task_log.created` |
+| POST | `/task-logs/{id}/like` | Toggle the caller's like on an entry → `200 { "task_log": TaskLog }`; broadcasts `task_log.updated` |
 
 > Task logs live in a dedicated `task_logs` collection and, like chat, are
 > append-only and do **not** bump the workspace `rev` or emit `ActivityEvent`s.
@@ -676,6 +682,7 @@ All payloads reuse the §2 models. Clients merge by `rev` (ignore `rev <= local`
 | `activity.created` | `{ "activity": ActivityEvent }` |
 | `chat.created` | `{ "message": ChatMessage }` (no `rev` — chat is outside the rev'd aggregate) |
 | `task_log.created` | `{ "task_log": TaskLog }` (no `rev` — task logs are outside the rev'd aggregate) |
+| `task_log.updated` | `{ "task_log": TaskLog }` — a like was toggled; body/author/kind unchanged, `likes` replaced |
 | `presence.update` | `Presence` (a peer's heartbeat) |
 | `presence.leave` | `{ "client_id" }` |
 
