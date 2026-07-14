@@ -46,6 +46,30 @@ func (f *fakeTaskLogRepository) List(_ context.Context, _ string, limit int) ([]
 	return f.entries[len(f.entries)-limit:], nil
 }
 
+func (f *fakeTaskLogRepository) ToggleLike(_ context.Context, _ string, entryID, collaboratorID string) (*entity.TaskLog, error) {
+	for i := range f.entries {
+		if f.entries[i].ID != entryID {
+			continue
+		}
+		likes := f.entries[i].Likes[:0:0]
+		found := false
+		for _, id := range f.entries[i].Likes {
+			if id == collaboratorID {
+				found = true
+				continue
+			}
+			likes = append(likes, id)
+		}
+		if !found {
+			likes = append(likes, collaboratorID)
+		}
+		f.entries[i].Likes = likes
+		out := f.entries[i]
+		return &out, nil
+	}
+	return nil, nil
+}
+
 type capturingPublisher struct {
 	events []Event
 }
@@ -97,6 +121,52 @@ func TestAddTaskLogPersistsBroadcastsAndDefaultsKind(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Fatalf("task log count = %d, want 2", len(list))
+	}
+}
+
+func TestToggleTaskLogLikeTogglesAndBroadcasts(t *testing.T) {
+	repo := &fakeWorkspaceRepository{workspace: &entity.Workspace{
+		ID: "room_1",
+		Collaborators: []entity.Collaborator{
+			{ID: "col_1", Name: "Ava", Role: entity.RoleBackend},
+			{ID: "col_2", Name: "Bo", Role: entity.RoleFrontend},
+		},
+	}}
+	taskLogs := &fakeTaskLogRepository{}
+	publisher := &capturingPublisher{}
+	service := NewService(repo, nil, taskLogs, "room_1", publisher)
+
+	entry, err := service.AddTaskLog(context.Background(), "col_1", "note", "shipped it", "")
+	if err != nil {
+		t.Fatalf("AddTaskLog returned error: %v", err)
+	}
+
+	liked, err := service.ToggleTaskLogLike(context.Background(), "col_2", entry.ID)
+	if err != nil {
+		t.Fatalf("ToggleTaskLogLike returned error: %v", err)
+	}
+	if len(liked.Likes) != 1 || liked.Likes[0] != "col_2" {
+		t.Fatalf("likes = %v, want [col_2]", liked.Likes)
+	}
+	last := publisher.events[len(publisher.events)-1]
+	if last.Type != "task_log.updated" {
+		t.Fatalf("last event = %q, want task_log.updated", last.Type)
+	}
+
+	// Second toggle by the same collaborator removes the like.
+	unliked, err := service.ToggleTaskLogLike(context.Background(), "col_2", entry.ID)
+	if err != nil {
+		t.Fatalf("ToggleTaskLogLike (unlike) returned error: %v", err)
+	}
+	if len(unliked.Likes) != 0 {
+		t.Fatalf("likes after unlike = %v, want empty", unliked.Likes)
+	}
+
+	if _, err := service.ToggleTaskLogLike(context.Background(), "col_2", "tlg_missing"); err == nil {
+		t.Fatal("missing entry: expected error, got nil")
+	}
+	if _, err := service.ToggleTaskLogLike(context.Background(), "col_missing", entry.ID); err == nil {
+		t.Fatal("unknown collaborator: expected error, got nil")
 	}
 }
 

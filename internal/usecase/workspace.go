@@ -758,6 +758,34 @@ func (s *Service) AddTaskLog(ctx context.Context, actorID string, kind entity.Ta
 	return &entry, nil
 }
 
+// ToggleTaskLogLike flips the actor's like on a work-update entry and broadcasts
+// the updated entry as `task_log.updated`. Likes are the entry's one mutable
+// facet; like the log itself they live outside the aggregate and never bump Rev.
+func (s *Service) ToggleTaskLogLike(ctx context.Context, actorID, entryID string) (*entity.TaskLog, error) {
+	if s.taskLog == nil {
+		return nil, fmt.Errorf("task log repository is not configured")
+	}
+	ws, err := s.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actor, ok := collaborator(ws, actorID)
+	if !ok {
+		return nil, notFound("collaborator", actorID)
+	}
+	entry, err := s.taskLog.ToggleLike(ctx, s.workspaceID, entryID, actor.ID)
+	if err != nil {
+		return nil, fmt.Errorf("toggle task log like: %w", err)
+	}
+	if entry == nil {
+		return nil, notFound("task log", entryID)
+	}
+	if s.publisher != nil {
+		s.publisher.Publish(Event{Type: "task_log.updated", Payload: *entry, WorkspaceID: s.workspaceID})
+	}
+	return entry, nil
+}
+
 func (s *Service) Activity(ctx context.Context, resourceID string, page, limit int) ([]entity.ActivityEvent, int, error) {
 	ws, err := s.Snapshot(ctx)
 	if err != nil {

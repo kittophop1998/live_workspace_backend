@@ -483,6 +483,15 @@ func (h *Handler) AddTaskLog(c *gin.Context) {
 	success(c, http.StatusCreated, gin.H{"task_log": taskLogDTO(*entry)})
 }
 
+func (h *Handler) ToggleTaskLogLike(c *gin.Context) {
+	entry, err := h.serviceFor(c).ToggleTaskLogLike(c.Request.Context(), middleware.CollaboratorID(c), c.Param("id"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, http.StatusOK, gin.H{"task_log": taskLogDTO(*entry)})
+}
+
 func (h *Handler) Activity(c *gin.Context) {
 	page, limit := positiveInt(c.Query("page"), 1), positiveInt(c.Query("limit"), 50)
 	if limit > 100 {

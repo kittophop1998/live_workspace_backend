@@ -150,6 +150,10 @@ type TaskLog struct {
 	Body       string
 	ResourceID string
 	At         time.Time
+	// Likes holds the collaborator IDs who liked the entry; the entry body stays
+	// immutable, likes are the one mutable facet (toggled, broadcast as
+	// `task_log.updated`).
+	Likes []string
 }
 
 type ActivityEvent struct {

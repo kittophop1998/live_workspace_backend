@@ -330,7 +330,11 @@ func chatMessagePayload(value entity.ChatMessage) map[string]any {
 	return map[string]any{"id": value.ID, "author_id": value.AuthorID, "author": value.Author, "role": value.Role, "body": value.Body, "at": value.At}
 }
 func taskLogPayload(value entity.TaskLog) map[string]any {
-	return map[string]any{"id": value.ID, "author_id": value.AuthorID, "author": value.Author, "role": value.Role, "kind": value.Kind, "body": value.Body, "resource_id": value.ResourceID, "at": value.At}
+	likes := value.Likes
+	if likes == nil {
+		likes = []string{}
+	}
+	return map[string]any{"id": value.ID, "author_id": value.AuthorID, "author": value.Author, "role": value.Role, "kind": value.Kind, "body": value.Body, "resource_id": value.ResourceID, "at": value.At, "likes": likes}
 }
 func activityPayload(value entity.ActivityEvent) map[string]any {
 	return map[string]any{"id": value.ID, "actor": value.Actor, "verb": value.Verb, "target": value.Target, "resource_id": value.ResourceID, "at": value.At}
