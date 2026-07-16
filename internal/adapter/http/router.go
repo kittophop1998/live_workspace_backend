@@ -11,7 +11,7 @@ import (
 	"kingdom_manager/backend/internal/adapter/http/realtime"
 )
 
-func NewRouter(h *handler.Handler, apiSpec *handler.APISpecHandler, auth *middleware.Auth, hub *realtime.Hub, origins []string) *gin.Engine {
+func NewRouter(h *handler.Handler, apiSpec *handler.APISpecHandler, apiKeys *handler.APIKeyHandler, auth *middleware.Auth, keyAuth *middleware.APIKeyAuth, hub *realtime.Hub, origins []string) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery(), cors.New(cors.Config{
 		AllowOrigins: origins, AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -22,11 +22,9 @@ func NewRouter(h *handler.Handler, apiSpec *handler.APISpecHandler, auth *middle
 	router.POST("/api/v1/rooms/join", h.JoinRoom)
 	v1 := router.Group("/api/v1", auth.Handler())
 	{
-		v1.GET("/cli/me", middleware.RequireScopes("api-spec:read"), apiSpec.Me)
-		v1.POST("/projects/:projectId/api-spec/revisions", middleware.RequireScopes("api-spec:write"), apiSpec.Publish)
-		v1.GET("/projects/:projectId/api-spec", middleware.RequireScopes("api-spec:read"), apiSpec.Current)
-		v1.GET("/projects/:projectId/api-spec/revisions", middleware.RequireScopes("api-spec:revision:read"), apiSpec.List)
-		v1.GET("/projects/:projectId/api-spec/revisions/:revisionId", middleware.RequireScopes("api-spec:read"), apiSpec.Get)
+		v1.POST("/api-keys", apiKeys.Create)
+		v1.GET("/api-keys", apiKeys.List)
+		v1.DELETE("/api-keys/:id", apiKeys.Revoke)
 		v1.GET("/workspace", h.Workspace)
 		v1.GET("/workspace/collaborators", h.Collaborators)
 		v1.GET("/me", h.Me)
@@ -94,5 +92,11 @@ func NewRouter(h *handler.Handler, apiSpec *handler.APISpecHandler, auth *middle
 
 		v1.GET("/stream", hub.Serve)
 	}
+	cli := router.Group("/api/v1")
+	cli.GET("/cli/me", keyAuth.Require("api-spec:read"), apiSpec.Me)
+	cli.POST("/projects/:projectId/api-spec/revisions", keyAuth.Require("api-spec:write"), apiSpec.Publish)
+	cli.GET("/projects/:projectId/api-spec", keyAuth.Require("api-spec:read"), apiSpec.Current)
+	cli.GET("/projects/:projectId/api-spec/revisions", keyAuth.Require("api-spec:revision:read"), apiSpec.List)
+	cli.GET("/projects/:projectId/api-spec/revisions/:revisionId", keyAuth.Require("api-spec:read"), apiSpec.Get)
 	return router
 }

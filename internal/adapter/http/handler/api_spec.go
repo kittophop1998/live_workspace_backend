@@ -57,7 +57,7 @@ func (h *APISpecHandler) Publish(c *gin.Context) {
 	if !bind(c, &r) {
 		return
 	}
-	value, unchanged, err := h.service.Publish(c.Request.Context(), middleware.ProjectID(c), usecase.PublishAPISpecInput{SourceFilename: r.SourceFilename, Format: r.Format, Content: r.Content, ContentHash: r.ContentHash, Message: r.Message, GitBranch: r.Git.Branch, GitCommitSHA: r.Git.CommitSHA, TokenID: middleware.CollaboratorID(c)})
+	value, unchanged, err := h.service.Publish(c.Request.Context(), middleware.ProjectID(c), usecase.PublishAPISpecInput{SourceFilename: r.SourceFilename, Format: r.Format, Content: r.Content, ContentHash: r.ContentHash, Message: r.Message, GitBranch: r.Git.Branch, GitCommitSHA: r.Git.CommitSHA, TokenID: c.GetString(middleware.APIKeyIDKey)})
 	if err != nil {
 		h.writeError(c, err)
 		return
