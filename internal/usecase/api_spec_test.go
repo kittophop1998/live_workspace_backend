@@ -50,21 +50,32 @@ func (r *apiSpecRepo) List(context.Context, string) ([]entity.APISpecRevision, e
 	}
 	return out, nil
 }
+type capturePublisher struct{ events []Event }
+
+func (p *capturePublisher) Publish(e Event) { p.events = append(p.events, e) }
+
 func TestAPISpecPublishValidatesAndPreventsDuplicates(t *testing.T) {
 	repo := &apiSpecRepo{}
-	service := NewAPISpecService(repo)
+	publisher := &capturePublisher{}
+	service := NewAPISpecService(repo, publisher)
 	input := PublishAPISpecInput{SourceFilename: "openapi.yaml", Format: "yaml", Content: "openapi: 3.1.0\ninfo: {title: Test, version: v1}\npaths: {}\n"}
 	first, unchanged, err := service.Publish(context.Background(), "prj_test", input)
 	if err != nil || unchanged || first.Number != 1 {
 		t.Fatalf("first publish = %#v unchanged=%v err=%v", first, unchanged, err)
 	}
+	if len(publisher.events) != 1 || publisher.events[0].Type != "api_spec.published" || publisher.events[0].WorkspaceID != "prj_test" {
+		t.Fatalf("expected one api_spec.published event for the workspace, got %#v", publisher.events)
+	}
 	second, unchanged, err := service.Publish(context.Background(), "prj_test", input)
 	if err != nil || !unchanged || second.ID != first.ID {
 		t.Fatalf("duplicate publish = %#v unchanged=%v err=%v", second, unchanged, err)
 	}
+	if len(publisher.events) != 1 {
+		t.Fatalf("duplicate publish must not broadcast, got %d events", len(publisher.events))
+	}
 }
 func TestAPISpecRejectsNonOpenAPI(t *testing.T) {
-	_, _, err := NewAPISpecService(&apiSpecRepo{}).Publish(context.Background(), "prj_test", PublishAPISpecInput{SourceFilename: "x.yaml", Format: "yaml", Content: "title: not-openapi"})
+	_, _, err := NewAPISpecService(&apiSpecRepo{}, nil).Publish(context.Background(), "prj_test", PublishAPISpecInput{SourceFilename: "x.yaml", Format: "yaml", Content: "title: not-openapi"})
 	if err == nil {
 		t.Fatal("expected OpenAPI validation error")
 	}

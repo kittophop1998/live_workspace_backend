@@ -90,6 +90,11 @@ func NewRouter(h *handler.Handler, apiSpec *handler.APISpecHandler, apiKeys *han
 		v1.POST("/feedback/:id/status", h.SetFeedbackStatus)
 		v1.DELETE("/feedback/:id", h.DeleteFeedback)
 
+		// Published API spec (synced by the CLI) — read-only for web clients.
+		v1.GET("/api-spec", apiSpec.WorkspaceCurrent)
+		v1.GET("/api-spec/revisions", apiSpec.WorkspaceList)
+		v1.GET("/api-spec/revisions/:revisionId", apiSpec.WorkspaceGet)
+
 		v1.GET("/stream", hub.Serve)
 	}
 	cli := router.Group("/api/v1")

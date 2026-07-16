@@ -71,12 +71,15 @@ func (h *APISpecHandler) get(c *gin.Context, id string) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
+	h.writeSpec(c, middleware.ProjectID(c), id)
+}
+func (h *APISpecHandler) writeSpec(c *gin.Context, projectID, id string) {
 	var value *entity.APISpecRevision
 	var err error
 	if id == "" {
-		value, err = h.service.Current(c.Request.Context(), middleware.ProjectID(c))
+		value, err = h.service.Current(c.Request.Context(), projectID)
 	} else {
-		value, err = h.service.Get(c.Request.Context(), middleware.ProjectID(c), id)
+		value, err = h.service.Get(c.Request.Context(), projectID, id)
 	}
 	if err != nil {
 		h.writeError(c, err)
@@ -89,7 +92,10 @@ func (h *APISpecHandler) List(c *gin.Context) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
-	values, err := h.service.List(c.Request.Context(), middleware.ProjectID(c))
+	h.writeList(c, middleware.ProjectID(c))
+}
+func (h *APISpecHandler) writeList(c *gin.Context, projectID string) {
+	values, err := h.service.List(c.Request.Context(), projectID)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -99,4 +105,18 @@ func (h *APISpecHandler) List(c *gin.Context) {
 		out = append(out, revisionJSON(&values[i]))
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// Workspace-scoped variants for the web app (collaborator JWT). API keys are
+// minted with projectID == workspaceID, so the CLI publishes into the caller's
+// own workspace and these read it back without exposing key-auth endpoints to
+// the browser.
+func (h *APISpecHandler) WorkspaceCurrent(c *gin.Context) {
+	h.writeSpec(c, middleware.WorkspaceID(c), "")
+}
+func (h *APISpecHandler) WorkspaceGet(c *gin.Context) {
+	h.writeSpec(c, middleware.WorkspaceID(c), c.Param("revisionId"))
+}
+func (h *APISpecHandler) WorkspaceList(c *gin.Context) {
+	h.writeList(c, middleware.WorkspaceID(c))
 }

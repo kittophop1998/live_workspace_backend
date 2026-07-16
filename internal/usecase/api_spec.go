@@ -15,12 +15,13 @@ import (
 )
 
 type APISpecService struct {
-	repo port.APISpecRepository
-	now  func() time.Time
+	repo      port.APISpecRepository
+	publisher Publisher
+	now       func() time.Time
 }
 
-func NewAPISpecService(repo port.APISpecRepository) *APISpecService {
-	return &APISpecService{repo: repo, now: func() time.Time { return time.Now().UTC() }}
+func NewAPISpecService(repo port.APISpecRepository, publisher Publisher) *APISpecService {
+	return &APISpecService{repo: repo, publisher: publisher, now: func() time.Time { return time.Now().UTC() }}
 }
 
 type PublishAPISpecInput struct{ SourceFilename, Format, Content, ContentHash, Message, GitBranch, GitCommitSHA, TokenID string }
@@ -40,6 +41,11 @@ func (s *APISpecService) Publish(ctx context.Context, projectID string, in Publi
 	stored, unchanged, err := s.repo.Publish(ctx, revision)
 	if err != nil {
 		return nil, false, fmt.Errorf("publish api spec: %w", err)
+	}
+	// API keys are minted per workspace (projectID == workspaceID), so the
+	// project's web clients live on that same workspace stream.
+	if !unchanged && s.publisher != nil {
+		s.publisher.Publish(Event{Type: "api_spec.published", WorkspaceID: projectID, Payload: stored})
 	}
 	return stored, unchanged, nil
 }
