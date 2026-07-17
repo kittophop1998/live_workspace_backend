@@ -57,12 +57,20 @@ func (h *APISpecHandler) Publish(c *gin.Context) {
 	if !bind(c, &r) {
 		return
 	}
-	value, unchanged, err := h.service.Publish(c.Request.Context(), middleware.ProjectID(c), usecase.PublishAPISpecInput{SourceFilename: r.SourceFilename, Format: r.Format, Content: r.Content, ContentHash: r.ContentHash, Message: r.Message, GitBranch: r.Git.Branch, GitCommitSHA: r.Git.CommitSHA, TokenID: c.GetString(middleware.APIKeyIDKey)})
+	published, err := h.service.Publish(c.Request.Context(), middleware.ProjectID(c), usecase.PublishAPISpecInput{SourceFilename: r.SourceFilename, Format: r.Format, Content: r.Content, ContentHash: r.ContentHash, Message: r.Message, GitBranch: r.Git.Branch, GitCommitSHA: r.Git.CommitSHA, TokenID: c.GetString(middleware.APIKeyIDKey)})
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"revision": revisionJSON(value), "unchanged": unchanged})
+	response := gin.H{"revision": revisionJSON(published.Revision), "unchanged": published.Unchanged}
+	if published.Workspace != nil {
+		workspace := gin.H{"applied": published.Workspace.Applied, "created": published.Workspace.Created, "updated": published.Workspace.Updated}
+		if published.Workspace.Error != "" {
+			workspace["error"] = published.Workspace.Error
+		}
+		response["workspace"] = workspace
+	}
+	c.JSON(http.StatusCreated, response)
 }
 func (h *APISpecHandler) Current(c *gin.Context) { h.get(c, "") }
 func (h *APISpecHandler) Get(c *gin.Context)     { h.get(c, c.Param("revisionId")) }

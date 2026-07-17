@@ -137,7 +137,7 @@ func buildApplication(ctx context.Context, cfg config.Config, client *mongo.Clie
 	storyService := usecase.NewStoryService(storyRepository)
 	proposalService := usecase.NewProposalService(proposalRepository)
 	feedbackService := usecase.NewFeedbackService(feedbackRepository)
-	apiSpecService := usecase.NewAPISpecService(apiSpecRepository, hub)
+	apiSpecService := usecase.NewAPISpecService(apiSpecRepository, hub, workspaceService)
 	apiKeyService := usecase.NewAPIKeyService(apiKeyRepository)
 
 	// Dev tool: allow proxying to private/localhost hosts so devs can test local APIs.
