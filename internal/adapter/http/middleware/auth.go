@@ -12,6 +12,8 @@ import (
 
 const CollaboratorKey = "collaborator_id"
 const WorkspaceKey = "workspace_id"
+const ProjectKey = "project_id"
+const ScopesKey = "scopes"
 
 type Auth struct {
 	secret   []byte
@@ -68,6 +70,41 @@ func (a *Auth) Handler() gin.HandlerFunc {
 		}
 		c.Set(CollaboratorKey, subject)
 		c.Set(WorkspaceKey, workspaceID)
+		projectID, _ := claims["project_id"].(string)
+		if projectID == "" {
+			projectID = workspaceID
+		}
+		c.Set(ProjectKey, projectID)
+		c.Set(ScopesKey, claims["scopes"])
+		c.Next()
+	}
+}
+
+func ProjectID(c *gin.Context) string {
+	value, _ := c.Get(ProjectKey)
+	id, _ := value.(string)
+	return id
+}
+func RequireScopes(required ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		raw, _ := c.Get(ScopesKey)
+		values, ok := raw.([]any)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": gin.H{"code": "INSUFFICIENT_SCOPE"}})
+			return
+		}
+		have := map[string]bool{}
+		for _, value := range values {
+			if scope, ok := value.(string); ok {
+				have[scope] = true
+			}
+		}
+		for _, scope := range required {
+			if !have[scope] {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": gin.H{"code": "INSUFFICIENT_SCOPE"}})
+				return
+			}
+		}
 		c.Next()
 	}
 }

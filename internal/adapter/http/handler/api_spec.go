@@ -1,0 +1,151 @@
+package handler
+
+import (
+	"errors"
+	"github.com/gin-gonic/gin"
+	"kingdom_manager/backend/internal/adapter/http/middleware"
+	"kingdom_manager/backend/internal/domain/entity"
+	"kingdom_manager/backend/internal/usecase"
+	"net/http"
+)
+
+type APISpecHandler struct{ service *usecase.APISpecService }
+
+func (h *APISpecHandler) writeError(c *gin.Context, err error) {
+	status, code, message := http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error"
+	var appErr *usecase.Error
+	if errors.As(err, &appErr) {
+		message = appErr.Message
+	}
+	if errors.Is(err, usecase.ErrValidation) {
+		status, code = http.StatusUnprocessableEntity, "VALIDATION_ERROR"
+	}
+	if errors.Is(err, usecase.ErrNotFound) {
+		status, code = http.StatusNotFound, "NOT_FOUND"
+	}
+	c.JSON(status, gin.H{"success": false, "message": message, "error": gin.H{"code": code}})
+}
+
+func NewAPISpecHandler(service *usecase.APISpecService) *APISpecHandler {
+	return &APISpecHandler{service}
+}
+func revisionJSON(v *entity.APISpecRevision) gin.H {
+	return gin.H{"id": v.ID, "number": v.Number, "status": v.Status, "contentHash": v.ContentHash, "sourceFilename": v.SourceFilename, "format": v.Format, "message": v.Message, "createdAt": v.CreatedAt}
+}
+func (h *APISpecHandler) Me(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"projectId": middleware.ProjectID(c), "workspaceId": middleware.WorkspaceID(c), "scopes": c.MustGet(middleware.ScopesKey)})
+}
+
+type publishAPISpecRequest struct {
+	SourceFilename string `json:"sourceFilename" binding:"required"`
+	Format         string `json:"format" binding:"required"`
+	Content        string `json:"content" binding:"required"`
+	ContentHash    string `json:"contentHash"`
+	Message        string `json:"message"`
+	Git            struct {
+		Branch    string `json:"branch"`
+		CommitSHA string `json:"commitSha"`
+	} `json:"git"`
+}
+
+func (h *APISpecHandler) Publish(c *gin.Context) {
+	if c.Param("projectId") != middleware.ProjectID(c) {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	var r publishAPISpecRequest
+	if !bind(c, &r) {
+		return
+	}
+	published, err := h.service.Publish(c.Request.Context(), middleware.ProjectID(c), usecase.PublishAPISpecInput{SourceFilename: r.SourceFilename, Format: r.Format, Content: r.Content, ContentHash: r.ContentHash, Message: r.Message, GitBranch: r.Git.Branch, GitCommitSHA: r.Git.CommitSHA, TokenID: c.GetString(middleware.APIKeyIDKey)})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, publishedJSON(published))
+}
+
+// Checkout re-publishes a historical revision as a new current revision and
+// returns its content so the CLI can restore the local source file.
+func (h *APISpecHandler) Checkout(c *gin.Context) {
+	if c.Param("projectId") != middleware.ProjectID(c) {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	published, err := h.service.Checkout(c.Request.Context(), middleware.ProjectID(c), c.Param("revisionId"), c.GetString(middleware.APIKeyIDKey))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response := publishedJSON(published)
+	response["content"] = published.Revision.Content
+	c.JSON(http.StatusCreated, response)
+}
+
+func publishedJSON(published *usecase.PublishedAPISpec) gin.H {
+	response := gin.H{"revision": revisionJSON(published.Revision), "unchanged": published.Unchanged}
+	if published.Workspace != nil {
+		workspace := gin.H{"applied": published.Workspace.Applied, "created": published.Workspace.Created, "updated": published.Workspace.Updated, "removed": published.Workspace.Removed}
+		if published.Workspace.Error != "" {
+			workspace["error"] = published.Workspace.Error
+		}
+		response["workspace"] = workspace
+	}
+	return response
+}
+func (h *APISpecHandler) Current(c *gin.Context) { h.get(c, "") }
+func (h *APISpecHandler) Get(c *gin.Context)     { h.get(c, c.Param("revisionId")) }
+func (h *APISpecHandler) get(c *gin.Context, id string) {
+	if c.Param("projectId") != middleware.ProjectID(c) {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	h.writeSpec(c, middleware.ProjectID(c), id)
+}
+func (h *APISpecHandler) writeSpec(c *gin.Context, projectID, id string) {
+	var value *entity.APISpecRevision
+	var err error
+	if id == "" {
+		value, err = h.service.Current(c.Request.Context(), projectID)
+	} else {
+		value, err = h.service.Get(c.Request.Context(), projectID, id)
+	}
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"revision": revisionJSON(value), "content": value.Content})
+}
+func (h *APISpecHandler) List(c *gin.Context) {
+	if c.Param("projectId") != middleware.ProjectID(c) {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	h.writeList(c, middleware.ProjectID(c))
+}
+func (h *APISpecHandler) writeList(c *gin.Context, projectID string) {
+	values, err := h.service.List(c.Request.Context(), projectID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	out := make([]gin.H, 0, len(values))
+	for i := range values {
+		out = append(out, revisionJSON(&values[i]))
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// Workspace-scoped variants for the web app (collaborator JWT). API keys are
+// minted with projectID == workspaceID, so the CLI publishes into the caller's
+// own workspace and these read it back without exposing key-auth endpoints to
+// the browser.
+func (h *APISpecHandler) WorkspaceCurrent(c *gin.Context) {
+	h.writeSpec(c, middleware.WorkspaceID(c), "")
+}
+func (h *APISpecHandler) WorkspaceGet(c *gin.Context) {
+	h.writeSpec(c, middleware.WorkspaceID(c), c.Param("revisionId"))
+}
+func (h *APISpecHandler) WorkspaceList(c *gin.Context) {
+	h.writeList(c, middleware.WorkspaceID(c))
+}

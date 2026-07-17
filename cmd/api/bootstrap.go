@@ -122,6 +122,14 @@ func buildApplication(ctx context.Context, cfg config.Config, client *mongo.Clie
 	if err := taskLogRepository.EnsureIndexes(ctx); err != nil {
 		return nil, err
 	}
+	apiSpecRepository := mongorepo.NewAPISpecRepository(database, client)
+	if err := apiSpecRepository.EnsureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	apiKeyRepository := mongorepo.NewAPIKeyRepository(database)
+	if err := apiKeyRepository.EnsureIndexes(ctx); err != nil {
+		return nil, err
+	}
 
 	hub := realtime.NewHub(cfg.AllowedOrigins)
 	workspaceService := usecase.NewService(workspaceRepository, chatRepository, taskLogRepository, cfg.WorkspaceID, hub)
@@ -129,6 +137,8 @@ func buildApplication(ctx context.Context, cfg config.Config, client *mongo.Clie
 	storyService := usecase.NewStoryService(storyRepository)
 	proposalService := usecase.NewProposalService(proposalRepository)
 	feedbackService := usecase.NewFeedbackService(feedbackRepository)
+	apiSpecService := usecase.NewAPISpecService(apiSpecRepository, hub, workspaceService)
+	apiKeyService := usecase.NewAPIKeyService(apiKeyRepository)
 
 	// Dev tool: allow proxying to private/localhost hosts so devs can test local APIs.
 	executor := httpexec.New(true)
@@ -137,7 +147,7 @@ func buildApplication(ctx context.Context, cfg config.Config, client *mongo.Clie
 
 	auth := middleware.NewAuth(cfg.JWTSecret, authTokenTTL)
 	apiHandler := handler.New(workspaceService, roomService, flowService, storyService, proposalService, feedbackService, executor, auth)
-	router := httpadapter.NewRouter(apiHandler, auth, hub, cfg.AllowedOrigins)
+	router := httpadapter.NewRouter(apiHandler, handler.NewAPISpecHandler(apiSpecService), handler.NewAPIKeyHandler(apiKeyService), auth, middleware.NewAPIKeyAuth(apiKeyService), hub, cfg.AllowedOrigins)
 
 	mcpServer := mcpadapter.NewServer(workspaceService, flowService, slog.Default())
 	mcpadapter.Mount(router, cfg.MCPEnabled, cfg.MCPPath, auth, mcpServer)

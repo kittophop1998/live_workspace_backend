@@ -241,6 +241,13 @@ func eventPayload(event usecase.Event) any {
 		if value.Comment != nil {
 			return map[string]any{"rev": value.Rev, "comment": commentPayload(*value.Comment)}
 		}
+	case *entity.APISpecRevision:
+		// Mirrors the REST /api-spec shape (camelCase, see handler.revisionJSON)
+		// so the web can apply the frame without a follow-up fetch.
+		return map[string]any{
+			"revision": map[string]any{"id": value.ID, "number": value.Number, "status": value.Status, "contentHash": value.ContentHash, "sourceFilename": value.SourceFilename, "format": value.Format, "message": value.Message, "createdAt": value.CreatedAt},
+			"content":  value.Content,
+		}
 	case entity.ActivityEvent:
 		return map[string]any{"activity": activityPayload(value)}
 	case entity.ChatMessage:
