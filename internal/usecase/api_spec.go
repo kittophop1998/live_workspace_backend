@@ -36,6 +36,7 @@ type WorkspaceSyncSummary struct {
 	Applied bool
 	Created int
 	Updated int
+	Removed int
 	Error   string
 }
 
@@ -52,6 +53,27 @@ type PublishedAPISpec struct {
 const specSyncActor = "Live Workspace CLI"
 
 func (s *APISpecService) Publish(ctx context.Context, projectID string, in PublishAPISpecInput) (*PublishedAPISpec, error) {
+	return s.publish(ctx, projectID, in, false)
+}
+
+// Checkout re-publishes a historical revision's exact content as a NEW
+// current revision (history stays append-only; nothing is re-pointed or
+// mutated) and applies it to the workspace with pruning, so spec-managed
+// endpoints that do not exist in that version disappear from the web app too.
+// Checking out the revision whose content already is current reports
+// unchanged.
+func (s *APISpecService) Checkout(ctx context.Context, projectID, revisionID, tokenID string) (*PublishedAPISpec, error) {
+	target, err := s.Get(ctx, projectID, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.publish(ctx, projectID, PublishAPISpecInput{
+		SourceFilename: target.SourceFilename, Format: target.Format, Content: target.Content,
+		Message: fmt.Sprintf("Checkout of %s (#%d)", target.ID, target.Number), TokenID: tokenID,
+	}, true)
+}
+
+func (s *APISpecService) publish(ctx context.Context, projectID string, in PublishAPISpecInput, prune bool) (*PublishedAPISpec, error) {
 	if projectID == "" || in.SourceFilename == "" || (in.Format != "yaml" && in.Format != "json") {
 		return nil, validation("project, source filename, and yaml/json format are required", nil)
 	}
@@ -76,12 +98,12 @@ func (s *APISpecService) Publish(ctx context.Context, projectID string, in Publi
 	// A new revision also lands in the workspace resources so the web app
 	// shows the synced endpoints through its regular resource flow.
 	if !unchanged && s.workspace != nil {
-		out.Workspace = s.applyToWorkspace(ctx, projectID, stored)
+		out.Workspace = s.applyToWorkspace(ctx, projectID, stored, prune)
 	}
 	return out, nil
 }
 
-func (s *APISpecService) applyToWorkspace(ctx context.Context, projectID string, revision *entity.APISpecRevision) *WorkspaceSyncSummary {
+func (s *APISpecService) applyToWorkspace(ctx context.Context, projectID string, revision *entity.APISpecRevision, prune bool) *WorkspaceSyncSummary {
 	endpoints, err := openapi.Endpoints(revision.Content, revision.Format)
 	if err != nil {
 		return &WorkspaceSyncSummary{Error: err.Error()}
@@ -102,11 +124,11 @@ func (s *APISpecService) applyToWorkspace(ctx context.Context, projectID string,
 		}
 		inputs[i] = ImportEndpointInput{Name: endpoint.Name, Method: endpoint.Method, Path: endpoint.Path, Fields: fields, Responses: responses}
 	}
-	result, err := s.workspace.ForWorkspace(projectID).ApplySpecEndpoints(ctx, specSyncActor, inputs)
+	result, err := s.workspace.ForWorkspace(projectID).ApplySpecEndpoints(ctx, specSyncActor, inputs, prune)
 	if err != nil {
 		return &WorkspaceSyncSummary{Error: err.Error()}
 	}
-	return &WorkspaceSyncSummary{Applied: true, Created: result.Created, Updated: result.Updated}
+	return &WorkspaceSyncSummary{Applied: true, Created: result.Created, Updated: result.Updated, Removed: result.Removed}
 }
 func (s *APISpecService) Current(ctx context.Context, projectID string) (*entity.APISpecRevision, error) {
 	value, err := s.repo.Current(ctx, projectID)

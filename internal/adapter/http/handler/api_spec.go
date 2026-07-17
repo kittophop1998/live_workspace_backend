@@ -30,7 +30,7 @@ func NewAPISpecHandler(service *usecase.APISpecService) *APISpecHandler {
 	return &APISpecHandler{service}
 }
 func revisionJSON(v *entity.APISpecRevision) gin.H {
-	return gin.H{"id": v.ID, "number": v.Number, "status": v.Status, "contentHash": v.ContentHash, "sourceFilename": v.SourceFilename, "format": v.Format, "createdAt": v.CreatedAt}
+	return gin.H{"id": v.ID, "number": v.Number, "status": v.Status, "contentHash": v.ContentHash, "sourceFilename": v.SourceFilename, "format": v.Format, "message": v.Message, "createdAt": v.CreatedAt}
 }
 func (h *APISpecHandler) Me(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"projectId": middleware.ProjectID(c), "workspaceId": middleware.WorkspaceID(c), "scopes": c.MustGet(middleware.ScopesKey)})
@@ -62,15 +62,36 @@ func (h *APISpecHandler) Publish(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
+	c.JSON(http.StatusCreated, publishedJSON(published))
+}
+
+// Checkout re-publishes a historical revision as a new current revision and
+// returns its content so the CLI can restore the local source file.
+func (h *APISpecHandler) Checkout(c *gin.Context) {
+	if c.Param("projectId") != middleware.ProjectID(c) {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	published, err := h.service.Checkout(c.Request.Context(), middleware.ProjectID(c), c.Param("revisionId"), c.GetString(middleware.APIKeyIDKey))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	response := publishedJSON(published)
+	response["content"] = published.Revision.Content
+	c.JSON(http.StatusCreated, response)
+}
+
+func publishedJSON(published *usecase.PublishedAPISpec) gin.H {
 	response := gin.H{"revision": revisionJSON(published.Revision), "unchanged": published.Unchanged}
 	if published.Workspace != nil {
-		workspace := gin.H{"applied": published.Workspace.Applied, "created": published.Workspace.Created, "updated": published.Workspace.Updated}
+		workspace := gin.H{"applied": published.Workspace.Applied, "created": published.Workspace.Created, "updated": published.Workspace.Updated, "removed": published.Workspace.Removed}
 		if published.Workspace.Error != "" {
 			workspace["error"] = published.Workspace.Error
 		}
 		response["workspace"] = workspace
 	}
-	c.JSON(http.StatusCreated, response)
+	return response
 }
 func (h *APISpecHandler) Current(c *gin.Context) { h.get(c, "") }
 func (h *APISpecHandler) Get(c *gin.Context)     { h.get(c, c.Param("revisionId")) }

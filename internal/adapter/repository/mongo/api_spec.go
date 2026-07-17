@@ -21,7 +21,12 @@ func NewAPISpecRepository(database *mongo.Database, client *mongo.Client) *APISp
 	return &APISpecRepository{revisions: database.Collection("api_spec_revisions"), counters: database.Collection("api_spec_counters"), client: client}
 }
 func (r *APISpecRepository) EnsureIndexes(ctx context.Context) error {
-	_, err := r.revisions.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "content_hash", Value: 1}}, Options: options.Index().SetUnique(true)}, {Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "number", Value: -1}}, Options: options.Index().SetUnique(true)}, {Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "status", Value: 1}}}})
+	// The legacy unique (project_id, content_hash) index made any content that
+	// ever existed unpublishable again, which blocked reverts and checkout.
+	// Deduplication now only compares against the current revision, so the
+	// same content may legitimately reappear later in the history.
+	_, _ = r.revisions.Indexes().DropOne(ctx, "project_id_1_content_hash_1")
+	_, err := r.revisions.Indexes().CreateMany(ctx, []mongo.IndexModel{{Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "number", Value: -1}}, Options: options.Index().SetUnique(true)}, {Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "status", Value: 1}}}})
 	return err
 }
 
@@ -56,17 +61,19 @@ func (r *APISpecRepository) Publish(ctx context.Context, value *entity.APISpecRe
 	defer session.EndSession(ctx)
 	var result *entity.APISpecRevision
 	_, err = session.WithTransaction(ctx, func(sc mongo.SessionContext) (any, error) {
-		var existing apiSpecDoc
-		err := r.revisions.FindOne(sc, bson.M{"project_id": value.ProjectID, "content_hash": value.ContentHash}).Decode(&existing)
-		if err == nil {
-			result = toAPIEntity(&existing)
+		// Unchanged only when the content matches the CURRENT revision.
+		// Content matching an older, superseded revision is a revert and must
+		// become a new revision, otherwise `current` (and the workspace) would
+		// silently stay on the newer content.
+		var previous apiSpecDoc
+		err := r.revisions.FindOne(sc, bson.M{"project_id": value.ProjectID, "status": "current"}).Decode(&previous)
+		if err == nil && previous.ContentHash == value.ContentHash {
+			result = toAPIEntity(&previous)
 			return nil, nil
 		}
-		if !errors.Is(err, mongo.ErrNoDocuments) {
+		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, err
 		}
-		var previous apiSpecDoc
-		_ = r.revisions.FindOne(sc, bson.M{"project_id": value.ProjectID, "status": "current"}).Decode(&previous)
 		update := r.counters.FindOneAndUpdate(sc, bson.M{"_id": value.ProjectID}, bson.M{"$inc": bson.M{"number": 1}}, options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After))
 		var counter struct {
 			Number int64 `bson:"number"`

@@ -103,5 +103,6 @@ func NewRouter(h *handler.Handler, apiSpec *handler.APISpecHandler, apiKeys *han
 	cli.GET("/projects/:projectId/api-spec", keyAuth.Require("api-spec:read"), apiSpec.Current)
 	cli.GET("/projects/:projectId/api-spec/revisions", keyAuth.Require("api-spec:revision:read"), apiSpec.List)
 	cli.GET("/projects/:projectId/api-spec/revisions/:revisionId", keyAuth.Require("api-spec:read"), apiSpec.Get)
+	cli.POST("/projects/:projectId/api-spec/revisions/:revisionId/checkout", keyAuth.Require("api-spec:write"), apiSpec.Checkout)
 	return router
 }
